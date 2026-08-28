@@ -29,11 +29,13 @@ CTX="$(mktemp -d)"
 trap 'rm -rf "$CTX"' EXIT
 mkdir -p "$CTX/overlay"
 
-# 只取相对基线改动的、非测试的源文件（构建产物如 _version.py 未被 git 跟踪，
-# 因此不会卷入，镜像内原有的产物得以保留）。
-git diff --name-only "$BASE_TAG" HEAD | grep -v '^tests/' > "$CTX/changed.txt"
+# 只取两个 Python 包内改动的文件：测试与构建工具（docker/ 等）不入镜像。
+# 构建产物如 _version.py 未被 git 跟踪，因此不会卷入，镜像内原有产物得以保留。
+git diff --name-only "$BASE_TAG" HEAD \
+  | grep -E '^(openviking|openviking_cli)/' \
+  | grep -v '^tests/' > "$CTX/changed.txt"
 if [ ! -s "$CTX/changed.txt" ]; then
-  echo "ERROR: 相对 $BASE_TAG 没有源码改动，无需叠加。" >&2
+  echo "ERROR: 相对 $BASE_TAG 没有需要叠加的包内源码改动。" >&2
   exit 1
 fi
 while read -r f; do
