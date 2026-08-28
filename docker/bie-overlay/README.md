@@ -46,6 +46,29 @@ Docker Hub 的 rust / node / python 三个基础镜像**默认走 `docker.m.daoc
 经验证可用，若成为瓶颈可照此参数化）。
 
 
+### cargo 源
+
+crates.io 默认走 USTC：`sparse+https://mirrors.ustc.edu.cn/crates.io-index/`。
+用官方源：`OV_CARGO_MIRROR=`（置空）。实测 index 拉取 0.156s vs 直连 3.48s。
+
+`cargo build --release` 的耗时大头是抓几百个 crate 而非编译——诊断依据：cargo
+进程 `State: S`、单线程、零子进程、无 rustc 进程、整机 CPU 97% 空闲。真正编译时
+会有十几个 rustc 并行、CPU 打满。源替换是 checksum 透明的，`Cargo.lock` 照常校验。
+
+### 为什么不换 uv/PyPI 源
+
+**换了会直接让构建失败。** `uv.lock` 里 360 条记录都钉着
+`registry = "https://pypi.org/simple"`，设置 `UV_DEFAULT_INDEX` 会使锁文件失效，
+而构建用的是 `uv sync --locked`。实测：
+
+    官方源:  Resolved 310 packages in 2ms                          exit=0
+    USTC:    error: The lockfile at `uv.lock` needs to be updated,
+             but `--check` was provided.                            exit=1
+
+且实测 PyPI 不是瓶颈——整个 wheel 下载阶段约 20 秒完成。若确需换源，只能配
+`UV_LOCK_STRATEGY=auto`（构建内重新 lock，丢失可复现性），或改写仓库 uv.lock
+（污染仓库、与上游分叉）。
+
 ### apt 源
 
 Debian apt 源默认走 `http://mirrors.ustc.edu.cn`（构建容器直连 `deb.debian.org`
