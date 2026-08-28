@@ -34,6 +34,10 @@ services:
         # apt 里才装的 ca-certificates，https 会先有鸡先有蛋。
         # 用镜像自带源：OV_APT_MIRROR= （置空即可）
         APT_MIRROR: ${OV_APT_MIRROR-http://mirrors.ustc.edu.cn}
+        # crates.io 同样默认走 USTC：实测 index 拉取 0.156s vs 直连 3.48s。
+        # cargo build 的耗时大头是抓几百个 crate，不是编译。
+        # 用官方源：OV_CARGO_MIRROR= （置空即可）
+        CARGO_MIRROR: ${OV_CARGO_MIRROR-sparse+https://mirrors.ustc.edu.cn/crates.io-index/}
         # 构建期代理刻意用独立变量名，不直接读 HTTP_PROXY/HTTPS_PROXY：
         # 否则 shell 里的 socks5:// 之类会被静默继承进构建容器，而多数构建
         # 工具只认 http://，且 uv 经本地代理有僵死前科。要用时显式设置：

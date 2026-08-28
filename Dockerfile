@@ -12,6 +12,10 @@ ARG RUNTIME_IMAGE=python:3.13-slim-trixie
 # the DEB822 sources. Use http:// — the runtime stage installs ca-certificates,
 # so https would be a chicken-and-egg problem there.
 ARG APT_MIRROR=
+# crates.io source replacement. Empty (default) keeps upstream crates.io, so a
+# bare `docker build` is unaffected. Set e.g.
+# sparse+https://mirrors.ustc.edu.cn/crates.io-index/ to fetch through a mirror.
+ARG CARGO_MIRROR=
 
 # Stage 1: provide Rust toolchain (required by setup.py -> build_ov_cli_artifact -> cargo build)
 # ragfs-python's default S3-enabled dependency set currently requires rustc >= 1.91.1.
@@ -67,6 +71,17 @@ ENV CCACHE_DIR=/root/.ccache
 # build artifacts across layer reruns even when uv builds the wheel in an
 # ephemeral isolated tempdir.
 ENV CARGO_TARGET_DIR=/cargo-target
+
+# Point cargo at CARGO_MIRROR when set. `cargo build` spends most of its time
+# fetching hundreds of crates; direct crates.io access is the slow leg here, not
+# compilation. Source replacement is checksum-transparent, so Cargo.lock still
+# validates unchanged.
+ARG CARGO_MIRROR
+RUN if [ -n "${CARGO_MIRROR}" ]; then \
+        mkdir -p "${CARGO_HOME}"; \
+        printf '[source.crates-io]\nreplace-with = "mirror"\n\n[source.mirror]\nregistry = "%s"\n' \
+            "${CARGO_MIRROR}" > "${CARGO_HOME}/config.toml"; \
+    fi
 
 ENV UV_COMPILE_BYTECODE=1
 ENV UV_LINK_MODE=copy
