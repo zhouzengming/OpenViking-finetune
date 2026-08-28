@@ -170,7 +170,10 @@ class RerankClient(RerankBase):
                 duration_seconds=time.monotonic() - started,
             )
 
-            # Each document is a separate group, data array returns scores for each group sequentially
+            # Each document is a separate group. The API sorts groups by score
+            # and tags each one with "id" = its index in the request, so scores
+            # must be mapped back by id. Responses without "id" keep the legacy
+            # positional reading.
             data = result_payload["data"]
             if len(data) != len(documents):
                 logger.warning(
@@ -179,7 +182,22 @@ class RerankClient(RerankBase):
                     len(data),
                 )
                 return None
-            scores = [item.get("score", 0.0) for item in data]
+
+            scores = [0.0] * len(documents)
+            assigned: set[int] = set()
+            for position, item in enumerate(data):
+                index = item.get("id", position)
+                if not isinstance(index, int) or isinstance(index, bool):
+                    logger.warning("[RerankClient] Non-integer id in rerank item: %s", item)
+                    return None
+                if not (0 <= index < len(documents)):
+                    logger.warning("[RerankClient] Out-of-bounds id in rerank item: %s", item)
+                    return None
+                if index in assigned:
+                    logger.warning("[RerankClient] Duplicate id in rerank result: %s", item)
+                    return None
+                assigned.add(index)
+                scores[index] = item.get("score", 0.0)
 
             logger.debug(f"[RerankClient] Reranked {len(documents)} documents")
             return scores
