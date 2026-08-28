@@ -24,6 +24,22 @@
 Node、以及可用的 PyPI/crates/npm 网络。注意本机 uv 走本地代理曾出现僵死，
 必要时用 `env -u *_proxy UV_DEFAULT_INDEX=<国内镜像>` 绕行。
 
+## 日常更新流程
+
+改完源码后两条命令：
+
+    docker/bie-overlay/build.sh                                   # 可从任意目录用绝对路径调用
+    cd /home/zzm/.containers/openviking && docker compose up -d
+
+同名 tag 重建会产生新的镜像 ID，`compose up -d` 据此判定并重建容器（已实测）。
+
+自检（确认跑的就是刚构建的）：
+
+    [ "$(docker inspect openviking --format '{{.Image}}')" \
+      = "$(docker image inspect openviking:v0.4.16-bie.1 --format '{{.Id}}')" ] \
+      && echo "镜像一致" || echo "容器是旧的"
+    docker exec openviking sh -c 'echo $OPENVIKING_SOURCE_COMMIT'   # 应等于源码 HEAD
+
 ## 切换运行时的两个必做检查
 
 1. **移除 entrypoint 补丁包装**。旧 compose 用 `apply_rerank_patch.py` /
