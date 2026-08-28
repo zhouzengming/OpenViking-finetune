@@ -42,8 +42,16 @@ Docker Hub 的 rust / node / python 三个基础镜像**默认走 `docker.m.daoc
 注意这只是 compose 这层的默认值；`Dockerfile` 里 `RUST_IMAGE` / `NODE_IMAGE` /
 `RUNTIME_IMAGE` 三个 ARG 的默认值仍是上游引用，裸 `docker build` 行为不变。
 
-`ghcr.io` 的 uv 镜像未参数化，仍从官方拉取（`ghcr.m.daocloud.io/astral-sh/uv:python3.13-trixie-slim`
-经验证可用，若成为瓶颈可照此参数化）。
+uv 构建镜像（ghcr.io）同样参数化，默认走 `ghcr.m.daocloud.io`，
+回官方源用 `OV_GHCR=ghcr.io`。四个基础镜像的元数据均已验证可从镜像站解析。
+
+⚠️ **仍有一处硬编码的 docker.io 依赖**：Dockerfile 第一行的
+`# syntax=docker/dockerfile:1.9`。syntax 指令在 ARG 解析之前生效，无法参数化。
+完全访问不到 docker.io 的机器需要先手工把该前端镜像准备到本地：
+
+    docker pull docker.m.daocloud.io/docker/dockerfile:1.9
+    docker tag  docker.m.daocloud.io/docker/dockerfile:1.9 docker/dockerfile:1.9
+
 
 
 ### cargo 源

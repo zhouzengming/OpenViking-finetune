@@ -21,14 +21,14 @@ services:
         OPENVIKING_VERSION: ${OPENVIKING_VERSION:?请显式设置，例如 OPENVIKING_VERSION=$(git describe --tags --match 'v[0-9]*' | sed 's/^v//; s/-\([0-9]*\)-g/+\1.g/')}
         # locked = 锁文件对不上即失败（可复现）；auto = 过期则自动 uv lock
         UV_LOCK_STRATEGY: ${UV_LOCK_STRATEGY:-locked}
-        # Docker Hub 三个基础镜像默认走 daocloud 镜像站：本机 daemon 配置里
-        # 拉取走 socks5 代理，而 no-proxy 放行了 *.daocloud.io，所以走镜像站
-        # 既换了源也绕开了代理瓶颈。回官方源用 OV_DOCKERHUB=docker.io。
+        # 四个基础镜像默认走 daocloud 镜像站：本机 daemon 拉取走 socks5 代理，
+        # 而 no-proxy 放行了 *.daocloud.io，所以走镜像站既换源也绕开代理瓶颈。
+        # 回官方源：OV_DOCKERHUB=docker.io OV_GHCR=ghcr.io
         # 注意 Dockerfile 里的 ARG 默认值仍是上游引用，裸 docker build 不受影响。
-        # ghcr.io 的 uv 镜像按需求未参数化，仍从官方拉取。
         RUST_IMAGE: ${OV_DOCKERHUB:-docker.m.daocloud.io}/library/rust:1.91.1-trixie
         NODE_IMAGE: ${OV_DOCKERHUB:-docker.m.daocloud.io}/library/node:24-trixie-slim
         RUNTIME_IMAGE: ${OV_DOCKERHUB:-docker.m.daocloud.io}/library/python:3.13-slim-trixie
+        UV_IMAGE: ${OV_GHCR:-ghcr.m.daocloud.io}/astral-sh/uv:python3.13-trixie-slim
         # Debian apt 源默认走 USTC（构建容器直连 deb.debian.org 在国内很慢，
         # 且构建期代理默认为空）。用 http:// 而非 https://：运行时阶段是在这条
         # apt 里才装的 ca-certificates，https 会先有鸡先有蛋。
