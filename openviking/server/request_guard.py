@@ -11,9 +11,9 @@ retrieval keeps consuming rerank quota and GPU time until it happens to finish.
 
 This module races the actual work against two guards:
 
-* a disconnect poller, safe to run here because FastAPI has already consumed the
-  request body by the time a handler body executes, so nothing else is reading
-  from ``receive``;
+* a disconnect watcher, safe to run here because FastAPI has already consumed
+  the request body by the time a handler body executes, so nothing else is
+  reading from ``receive``;
 * an optional deadline, for clients that stay connected but have given up (and
   for half-open connections, where no disconnect is ever observed).
 """
@@ -21,36 +21,46 @@ This module races the actual work against two guards:
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Awaitable, Callable, Optional, Protocol
+from typing import Any, Awaitable, Callable, MutableMapping, Optional, Protocol
 
 from openviking_cli.exceptions import ClientDisconnectedError, DeadlineExceededError
 from openviking_cli.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-DEFAULT_POLL_SECONDS = 1.0
 
-
-class SupportsIsDisconnected(Protocol):
+class SupportsReceive(Protocol):
     """The one piece of ``starlette.requests.Request`` this module needs."""
 
-    async def is_disconnected(self) -> bool: ...
+    async def receive(self) -> MutableMapping[str, Any]: ...
 
 
-async def _watch_disconnect(
-    http_request: SupportsIsDisconnected, poll_seconds: float, operation: str
-) -> None:
-    """Return once the client is gone; never return while it may still be there."""
+async def _watch_disconnect(http_request: SupportsReceive, operation: str) -> None:
+    """Return once the client is gone; never return while it may still be there.
+
+    This awaits ASGI messages instead of polling ``Request.is_disconnected()``.
+    ``is_disconnected()`` reads with an immediately-cancelled scope, which works
+    against a raw uvicorn receive but silently always reports "connected" once a
+    ``BaseHTTPMiddleware`` — that is, any ``@app.middleware("http")``, of which
+    this app installs several — replaces the endpoint's receive with its
+    ``receive_or_disconnect`` wrapper: that wrapper needs at least one scheduling
+    round to hand over a queued message, and the cancelled scope never gives it
+    one. Awaiting the message works through both paths.
+
+    Only safe because callers wire this to routes whose body FastAPI has already
+    consumed; on a streaming endpoint it would eat the body the handler needs.
+    """
     while True:
         try:
-            if await http_request.is_disconnected():
-                return
+            message = await http_request.receive()
         except Exception as e:  # noqa: BLE001
-            # Losing the ability to poll must not abort a live request, so treat
-            # an unreadable connection as still connected and let the deadline
-            # be the backstop.
-            logger.debug("[RequestGuard] Disconnect poll failed for %s: %s", operation, e)
-        await asyncio.sleep(poll_seconds)
+            # Losing the ability to read must not abort a live request. Block
+            # forever instead, so this watcher can never win the race, and let
+            # the deadline be the backstop.
+            logger.debug("[RequestGuard] Disconnect watch failed for %s: %s", operation, e)
+            await asyncio.Event().wait()
+        if message.get("type") == "http.disconnect":
+            return
 
 
 async def _cancel_and_drain(*tasks: Optional["asyncio.Task[Any]"]) -> None:
@@ -67,18 +77,16 @@ async def run_guarded(
     fn: Callable[[], Awaitable[Any]],
     *,
     operation: str,
-    http_request: Optional[SupportsIsDisconnected] = None,
+    http_request: Optional[SupportsReceive] = None,
     timeout: Optional[float] = None,
-    poll_seconds: float = DEFAULT_POLL_SECONDS,
 ) -> Any:
     """Run ``fn`` but abandon it once the client leaves or the deadline passes.
 
     Args:
         fn: Zero-argument factory returning the awaitable to guard.
         operation: Operation name used in logs and error details.
-        http_request: Request to poll for disconnects; None disables that guard.
+        http_request: Request to watch for disconnects; None disables that guard.
         timeout: Deadline in seconds; None or <= 0 disables that guard.
-        poll_seconds: Disconnect poll interval.
 
     Returns:
         Whatever ``fn`` returns, with its exceptions propagated unchanged.
@@ -95,7 +103,7 @@ async def run_guarded(
     watcher: Optional[asyncio.Task[None]] = None
     waiters: set[Any] = {work}
     if http_request is not None:
-        watcher = asyncio.ensure_future(_watch_disconnect(http_request, poll_seconds, operation))
+        watcher = asyncio.ensure_future(_watch_disconnect(http_request, operation))
         waiters.add(watcher)
 
     try:
