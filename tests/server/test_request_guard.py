@@ -17,17 +17,20 @@ from openviking_cli.exceptions import ClientDisconnectedError, DeadlineExceededE
 
 
 class FakeRequest:
-    """Stands in for a Starlette Request, counting disconnect polls."""
+    """Stands in for a Starlette Request, serving ASGI messages."""
 
     def __init__(self, disconnect_after_polls=None):
         self.polls = 0
         self._disconnect_after_polls = disconnect_after_polls
 
-    async def is_disconnected(self) -> bool:
+    async def receive(self):
         self.polls += 1
-        return (
-            self._disconnect_after_polls is not None and self.polls >= self._disconnect_after_polls
-        )
+        if self._disconnect_after_polls is None:
+            # A still-connected client sends nothing more; block like a real one.
+            await asyncio.sleep(3600)
+        if self.polls >= self._disconnect_after_polls:
+            return {"type": "http.disconnect"}
+        return {"type": "http.request", "body": b"", "more_body": False}
 
 
 def _slow_work(cleanup_flag, seconds=30):
@@ -46,9 +49,7 @@ class TestClientDisconnect:
         async def work():
             return "done"
 
-        result = await run_guarded(
-            work, operation="search.find", http_request=FakeRequest(), poll_seconds=0.01
-        )
+        result = await run_guarded(work, operation="search.find", http_request=FakeRequest())
 
         assert result == "done"
 
@@ -60,7 +61,6 @@ class TestClientDisconnect:
                 _slow_work(cleanup),
                 operation="search.find",
                 http_request=FakeRequest(disconnect_after_polls=2),
-                poll_seconds=0.01,
             )
 
         # The work must be cancelled, and cancellation must be awaited so its
@@ -72,9 +72,7 @@ class TestClientDisconnect:
             raise ValueError("upstream blew up")
 
         with pytest.raises(ValueError, match="upstream blew up"):
-            await run_guarded(
-                work, operation="search.find", http_request=FakeRequest(), poll_seconds=0.01
-            )
+            await run_guarded(work, operation="search.find", http_request=FakeRequest())
 
     async def test_no_tasks_are_leaked(self):
         before = len(asyncio.all_tasks())
@@ -82,9 +80,7 @@ class TestClientDisconnect:
         async def work():
             return "done"
 
-        await run_guarded(
-            work, operation="search.find", http_request=FakeRequest(), poll_seconds=0.01
-        )
+        await run_guarded(work, operation="search.find", http_request=FakeRequest())
         await asyncio.sleep(0)
 
         assert len(asyncio.all_tasks()) == before
@@ -118,7 +114,6 @@ class TestDeadline:
                 operation="search.find",
                 http_request=FakeRequest(disconnect_after_polls=2),
                 timeout=30,
-                poll_seconds=0.01,
             )
 
         assert cleanup == ["cleaned"]
@@ -221,3 +216,79 @@ class TestSearchRoutesAreGuarded:
             assert schema["$ref"].rsplit("/", 1)[-1] == expected
             names = {parameter["name"] for parameter in operation.get("parameters", [])}
             assert "http_request" not in names
+
+
+class TestGuardThroughBaseHTTPMiddleware:
+    """The guard must survive the app's own `@app.middleware("http")` stack.
+
+    `@app.middleware("http")` is BaseHTTPMiddleware, which hands the endpoint a
+    `receive_or_disconnect` wrapper. Starlette's `Request.is_disconnected()`
+    polls with an immediately-cancelled scope, and that wrapper needs at least
+    one scheduling round to deliver a queued message, so the poll always reports
+    "connected" and an abandoned request runs to completion.
+    """
+
+    def _app(self, aborted):
+        from fastapi import FastAPI, Request
+        from starlette.responses import JSONResponse
+
+        from openviking.server.request_guard import run_guarded
+
+        app = FastAPI()
+
+        @app.post("/slow")
+        async def slow(http_request: Request):
+            async def work():
+                # Short enough that the buggy path finishes and fails the
+                # assertion, rather than the whole test timing out.
+                await asyncio.sleep(2)
+                return "finished"
+
+            try:
+                await run_guarded(work, operation="test.slow", http_request=http_request)
+            except ClientDisconnectedError:
+                aborted.append(True)
+                return JSONResponse({"aborted": True})
+            return JSONResponse({"aborted": False})
+
+        @app.middleware("http")
+        async def passthrough(request, call_next):
+            return await call_next(request)
+
+        return app
+
+    async def _drive(self, app):
+        """Send a request, then a disconnect, straight at the ASGI app."""
+        scope = {
+            "type": "http",
+            "asgi": {"version": "3.0"},
+            "http_version": "1.1",
+            "method": "POST",
+            "path": "/slow",
+            "raw_path": b"/slow",
+            "query_string": b"",
+            "root_path": "",
+            "headers": [(b"host", b"test"), (b"content-length", b"0")],
+            "client": ("127.0.0.1", 1234),
+            "server": ("127.0.0.1", 80),
+            "scheme": "http",
+        }
+        pending = [
+            {"type": "http.request", "body": b"", "more_body": False},
+            {"type": "http.disconnect"},
+        ]
+
+        async def receive():
+            if pending:
+                return pending.pop(0)
+            await asyncio.sleep(3600)
+
+        async def send(message):
+            return None
+
+        await asyncio.wait_for(app(scope, receive, send), timeout=10)
+
+    async def test_disconnect_aborts_through_the_middleware_stack(self):
+        aborted = []
+        await self._drive(self._app(aborted))
+        assert aborted == [True]
