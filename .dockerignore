@@ -1,5 +1,12 @@
-# Local development artifacts are not needed by the runtime image and make the
-# build context unnecessarily large.
+# 上游自带一份（v0.4.17 起），本文件在其基础上补了几项；两边的取舍如下。
+#
+# Dockerfile 里每个 COPY 都是显式路径（无 COPY . .），且 BuildKit 按 COPY 惰性传输
+# 上下文，因此本文件的作用不是减小传输量，而是：
+#   1. 阻止 __pycache__ / *.pyc / node_modules 等本地产物进入被 COPY 的包目录，
+#      避免把陈旧字节码带进镜像、并让构建缓存键随本地临时文件抖动；
+#   2. 让 .git（277MB）等大目录不参与上下文文件列表扫描。
+
+# —— 上游原有 ——
 .git
 .venv
 __pycache__
@@ -18,3 +25,18 @@ web-studio/.vite
 node_modules
 *.log
 *.tmp
+
+# —— 本分支补充 ——
+.github
+docs
+tests
+tmp-doc
+**/node_modules
+**/__pycache__
+.mypy_cache
+*.egg-info
+
+# 注意：openviking/_version.py 受 .gitignore 管理，但本机可能残留。它若存在就会被
+# COPY 进去，使构建读到过期版本号（本机实测为 0.1.dev873）而不报错；全新 clone 上
+# 它不存在，构建则直接 exit 2。两种机器行为不一致，所以务必始终显式传
+# --build-arg OPENVIKING_VERSION=...，不要依赖这个回退。
