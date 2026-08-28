@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Literal, Optional, Sequence, Union
 from fastapi import APIRouter, Depends
 from fastapi import Response as FastAPIResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+from starlette.requests import Request
 
 from openviking.core.path_variables import resolve_path_variables
 from openviking.core.uri_validation import validate_request_viking_uri
@@ -34,7 +35,8 @@ from openviking.server.dependencies import get_service
 from openviking.server.error_mapping import map_exception
 from openviking.server.identity import RequestContext
 from openviking.server.models import Response
-from openviking.server.telemetry import run_operation
+from openviking.server.request_guard import run_guarded
+from openviking.server.telemetry import configured_request_timeout, run_operation
 from openviking.telemetry import TelemetryRequest
 from openviking.utils.image_search import is_viking_uri
 from openviking.utils.search_filters import (
@@ -323,6 +325,7 @@ class GlobRequest(BaseModel):
 @router.post("/find")
 async def find(
     request: FindRequest,
+    http_request: Request,
     _ctx: RequestContext = Depends(get_request_context),
 ):
     """Semantic search without session context."""
@@ -341,6 +344,7 @@ async def find(
     execution = await run_operation(
         operation="search.find",
         telemetry=request.telemetry,
+        http_request=http_request,
         fn=lambda: service.search.find(
             query=request.query,
             ctx=_ctx,
@@ -382,6 +386,7 @@ async def _search_context(
     service: Any,
     ctx: RequestContext,
     request: SearchRequest,
+    http_request: Request,
     effective_filter: Optional[Dict[str, Any]],
     actual_limit: int,
 ):
@@ -408,6 +413,7 @@ async def _search_context(
     execution = await run_operation(
         operation="search.context",
         telemetry=request.telemetry,
+        http_request=http_request,
         fn=lambda: assemble_context(service=service, ctx=ctx, params=params),
     )
     result = execution.result
@@ -424,6 +430,7 @@ async def _search_context(
 @router.post("/search")
 async def search(
     request: SearchRequest,
+    http_request: Request,
     _ctx: RequestContext = Depends(get_request_context),
 ):
     """Semantic search with optional session context."""
@@ -442,6 +449,7 @@ async def search(
             service=service,
             ctx=_ctx,
             request=request,
+            http_request=http_request,
             effective_filter=effective_filter,
             actual_limit=actual_limit,
         )
@@ -469,6 +477,7 @@ async def search(
     execution = await run_operation(
         operation="search.search",
         telemetry=request.telemetry,
+        http_request=http_request,
         fn=_search,
     )
     result = execution.result
@@ -488,6 +497,7 @@ async def search(
 async def recall(
     request: RecallRequest,
     response: FastAPIResponse,
+    http_request: Request,
     _ctx: RequestContext = Depends(get_request_context),
 ):
     """Deprecated preset over context assembly; use /search with mode="context"."""
@@ -498,6 +508,7 @@ async def recall(
     execution = await run_operation(
         operation="search.recall",
         telemetry=request.telemetry,
+        http_request=http_request,
         fn=lambda: assemble_context(service=service, ctx=_ctx, params=params),
     )
     result = execution.result
@@ -514,6 +525,7 @@ async def recall(
 @router.post("/grep")
 async def grep(
     request: GrepRequest,
+    http_request: Request,
     _ctx: RequestContext = Depends(get_request_context),
 ):
     """Content search with pattern."""
@@ -525,14 +537,19 @@ async def grep(
             resolve_path_variables(request.exclude_uri), _ctx, field_name="exclude_uri"
         )
     try:
-        result = await service.fs.grep(
-            resolved_uri,
-            request.pattern,
-            ctx=_ctx,
-            exclude_uri=resolved_exclude_uri,
-            case_insensitive=request.case_insensitive,
-            node_limit=request.node_limit,
-            level_limit=request.level_limit,
+        result = await run_guarded(
+            lambda: service.fs.grep(
+                resolved_uri,
+                request.pattern,
+                ctx=_ctx,
+                exclude_uri=resolved_exclude_uri,
+                case_insensitive=request.case_insensitive,
+                node_limit=request.node_limit,
+                level_limit=request.level_limit,
+            ),
+            operation="search.grep",
+            http_request=http_request,
+            timeout=configured_request_timeout(),
         )
     except AGFSNotFoundError:
         raise NotFoundError(resolved_uri, "file")
@@ -552,14 +569,20 @@ async def grep(
 @router.post("/glob")
 async def glob(
     request: GlobRequest,
+    http_request: Request,
     _ctx: RequestContext = Depends(get_request_context),
 ):
     """File pattern matching."""
     service = get_service()
     resolved_uri = validate_request_viking_uri(resolve_path_variables(request.uri), _ctx)
     try:
-        result = await service.fs.glob(
-            request.pattern, ctx=_ctx, uri=resolved_uri, node_limit=request.node_limit
+        result = await run_guarded(
+            lambda: service.fs.glob(
+                request.pattern, ctx=_ctx, uri=resolved_uri, node_limit=request.node_limit
+            ),
+            operation="search.glob",
+            http_request=http_request,
+            timeout=configured_request_timeout(),
         )
     except AGFSNotFoundError:
         raise NotFoundError(resolved_uri or request.pattern, "file")

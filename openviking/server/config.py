@@ -332,6 +332,12 @@ class ServerConfig(BaseModel):
     # connections the client still believes are reusable, causing sporadic
     # connection-reset / EOF errors.
     timeout_keep_alive: int = 5
+    # Server-side deadline for a single router operation, in seconds. 0 disables
+    # it, preserving the historical behavior where the only way a request ends is
+    # by finishing. Set this once no legitimate operation needs longer than the
+    # value: it is the backstop for clients that stay connected but have given
+    # up, and for half-open connections where no disconnect is ever observed.
+    request_timeout_seconds: float = 0.0
     auth_mode: Optional[str] = None  # If None, auto-detect based on root_api_key
     root_api_key: Optional[str] = None
     # OIDC/LDAP authentication configuration
