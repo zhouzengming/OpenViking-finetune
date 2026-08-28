@@ -18,11 +18,33 @@
 
 ## 路线 B：完整构建（仓库根 Dockerfile）
 
-    docker build -t openviking:dev .
+改动涉及依赖、Rust CLI、原生扩展或 web-studio 时必须走这条。用仓库根的
+`docker-compose.build.yml` 一条命令完成构建 + 启动：
 
-改动涉及依赖、Rust CLI、原生扩展或 web-studio 时必须走这条。需要 Rust 工具链、
-Node、以及可用的 PyPI/crates/npm 网络。注意本机 uv 走本地代理曾出现僵死，
-必要时用 `env -u *_proxy UV_DEFAULT_INDEX=<国内镜像>` 绕行。
+    OPENVIKING_VERSION=$(git describe --tags --match 'v[0-9]*' | sed 's/^v//; s/-\([0-9]*\)-g/+\1.g/') \
+      docker compose -f docker-compose.build.yml up -d --build
+
+`OPENVIKING_VERSION` 是**必填**的（compose 用 `:?` 强制）。原因见下节。
+其余可调变量：`OPENVIKING_IMAGE_TAG`、`OPENVIKING_SERVER_PORT`、
+`OPENVIKING_STATE_DIR`、`OPENVIKING_CONTAINER_NAME`、`UV_LOCK_STRATEGY`
+（默认 `locked`，锁文件对不上即失败）。
+
+代理刻意用 `OV_BUILD_HTTP_PROXY` 等独立变量名，不直接读 `HTTP_PROXY`——
+避免 shell 里的 `socks5://` 被静默继承进构建容器（多数构建工具只认 `http://`，
+且 uv 经本地代理有僵死前科）。
+
+新机器需要：BuildKit（Dockerfile 用了 `--mount=type=cache`）、约 15GB 磁盘、
+crates.io + npm + PyPI 三个源可达。**不需要** submodule，依赖全部 vendored。
+
+### 版本号：换机器必踩的坑
+
+`openviking/_version.py` 受 `.gitignore` 管理、不入版本库，而 Dockerfile 的版本
+解析是「build arg → `_version.py` → exit 2」：
+
+- **全新 clone**：文件不存在 → 构建 `exit 2` 失败
+- **开发机**：文件残留 → 读到过期版本号（实测 `0.1.dev873`）且**不报错**
+
+两种机器行为不一致，所以务必显式传 build arg，不要依赖回退。
 
 ## 日常更新流程
 

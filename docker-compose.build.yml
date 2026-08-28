@@ -1,0 +1,46 @@
+# 一个文件搞定「从源码完整构建 + 启动服务」。
+#
+#   OPENVIKING_VERSION=$(git describe --tags --match 'v[0-9]*' | sed 's/^v//; s/-\([0-9]*\)-g/+\1.g/') \
+#     docker compose -f docker-compose.build.yml up -d --build
+#
+# 走的是仓库根 Dockerfile 的完整构建（Rust 编译 ov CLI + C++ 扩展 +
+# web-studio SPA + uv sync），首次很慢，之后靠 BuildKit cache mount 提速。
+# 若改动是纯 Python 且未新增依赖，用 docker/bie-overlay/build.sh 更快。
+#
+# 上游自带的 docker-compose.yml 是拉预构建镜像 + Caddy 边车，与本文件无关。
+
+services:
+  openviking:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        # 必填。openviking/_version.py 受 .gitignore 管理：全新 clone 上它不存在，
+        # 构建会 exit 2；本机残留时又会被读到过期版本号且不报错。两种机器行为
+        # 不一致，所以这里用 :? 强制显式传入，宁可失败也不要静默打错版本。
+        OPENVIKING_VERSION: ${OPENVIKING_VERSION:?请显式设置，例如 OPENVIKING_VERSION=$(git describe --tags --match 'v[0-9]*' | sed 's/^v//; s/-\([0-9]*\)-g/+\1.g/')}
+        # locked = 锁文件对不上即失败（可复现）；auto = 过期则自动 uv lock
+        UV_LOCK_STRATEGY: ${UV_LOCK_STRATEGY:-locked}
+        # 构建期代理刻意用独立变量名，不直接读 HTTP_PROXY/HTTPS_PROXY：
+        # 否则 shell 里的 socks5:// 之类会被静默继承进构建容器，而多数构建
+        # 工具只认 http://，且 uv 经本地代理有僵死前科。要用时显式设置：
+        #   OV_BUILD_HTTP_PROXY=http://127.0.0.1:10809 docker compose ... --build
+        HTTP_PROXY: ${OV_BUILD_HTTP_PROXY:-}
+        HTTPS_PROXY: ${OV_BUILD_HTTPS_PROXY:-${OV_BUILD_HTTP_PROXY:-}}
+        NO_PROXY: ${OV_BUILD_NO_PROXY:-localhost,127.0.0.1}
+    image: openviking:${OPENVIKING_IMAGE_TAG:-source}
+    container_name: ${OPENVIKING_CONTAINER_NAME:-openviking}
+    ports:
+      - "${OPENVIKING_SERVER_PORT:-1933}:1933"
+    volumes:
+      # 运行时状态放仓库外，避免污染工作树。首次启动若无 ov.conf，可设
+      # OPENVIKING_CONF_CONTENT 传完整 JSON，或 docker exec 进去跑 openviking-server init。
+      - ${OPENVIKING_STATE_DIR:-${HOME}/.openviking-container}/.openviking:/app/.openviking
+      - ${OPENVIKING_STATE_DIR:-${HOME}/.openviking-container}/data:/app/data
+    healthcheck:
+      test: ["CMD", "openviking-entrypoint", "--healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
