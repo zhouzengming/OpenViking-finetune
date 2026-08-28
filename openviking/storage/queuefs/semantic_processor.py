@@ -72,6 +72,7 @@ from openviking.utils.circuit_breaker import (
 )
 from openviking.utils.ingest_options import IngestOptions
 from openviking.utils.model_retry import ERROR_CLASS_INPUT_TOO_LARGE, ERROR_CLASS_PERMANENT
+from openviking_cli.exceptions import PermissionDeniedError
 from openviking_cli.session.user_id import UserIdentifier
 from openviking_cli.utils import VikingURI
 from openviking_cli.utils.config import get_openviking_config
@@ -362,6 +363,9 @@ class SemanticProcessor(DequeueHandlerBase):
                 or classification.is_skill_root
             ):
                 return
+        # "viking://user" is the container shared by every account, not a
+        # directory any single user identity may write. Walking up past the
+        # account root produces a refresh that can never succeed.
         if (
             not parent_uri
             or parent_uri in {"viking://", "viking:", "viking://user", "viking://agent"}
@@ -749,6 +753,24 @@ class SemanticProcessor(DequeueHandlerBase):
                         work=work,
                     )
                 return ProcessResult.failed(str(e))
+
+            if isinstance(e, PermissionDeniedError):
+                # classify_api_error only understands model API failures, so a
+                # storage-layer permission error falls through to "transient"
+                # and is retried forever. Retrying never grants the permission,
+                # and the circuit breaker is shared by every account.
+                logger.error(
+                    "Permission denied processing semantic message, dropping: %s",
+                    e,
+                    exc_info=True,
+                )
+                if msg is not None:
+                    self._merge_request_stats(msg.telemetry_id, error_count=1)
+                    get_request_wait_tracker().mark_semantic_failed(
+                        msg.telemetry_id, msg.id, str(e)
+                    )
+                self.report_error(str(e), data)
+                return None
 
             error_class = classify_api_error(e)
             if error_class == ERROR_CLASS_INPUT_TOO_LARGE:
