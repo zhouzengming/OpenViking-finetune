@@ -55,19 +55,29 @@ crates.io 默认走 USTC：`sparse+https://mirrors.ustc.edu.cn/crates.io-index/`
 进程 `State: S`、单线程、零子进程、无 rustc 进程、整机 CPU 97% 空闲。真正编译时
 会有十几个 rustc 并行、CPU 打满。源替换是 checksum 透明的，`Cargo.lock` 照常校验。
 
-### 为什么不换 uv/PyPI 源
+### PyPI 源
 
-**换了会直接让构建失败。** `uv.lock` 里 360 条记录都钉着
-`registry = "https://pypi.org/simple"`，设置 `UV_DEFAULT_INDEX` 会使锁文件失效，
-而构建用的是 `uv sync --locked`。实测：
+默认走 USTC（`PYPI_INDEX` / `PYPI_FILES`），供**完全访问不到 pypi.org 的机器**构建。
+回官方源：`OV_PYPI_INDEX= OV_PYPI_FILES=`（两者一起置空）。
 
-    官方源:  Resolved 310 packages in 2ms                          exit=0
-    USTC:    error: The lockfile at `uv.lock` needs to be updated,
-             but `--check` was provided.                            exit=1
+做法是**在构建期改写 `uv.lock`**，仓库里那份保持与上游逐字节一致——避免 4217 处
+改动带来的永久合并冲突。`--locked` 的严格保证不受影响：包版本与全部 3857 个
+sha256 均不变，因为镜像站提供的是逐字节相同的产物（已实测同一 wheel 两处 sha256
+完全一致）。
 
-且实测 PyPI 不是瓶颈——整个 wheel 下载阶段约 20 秒完成。若确需换源，只能配
-`UV_LOCK_STRATEGY=auto`（构建内重新 lock，丢失可复现性），或改写仓库 uv.lock
-（污染仓库、与上游分叉）。
+⚠️ **两个变量必须成对设置，只改 uv.lock 不够。** `uv.lock` 钉的是两层：
+`registry`（360 处，决定一致性校验）和 `url`（3857 处，决定实际下载地址）。但还有
+第三条隐藏路径——`sgmllib3k`、`fusepy` 这类**源码包**在构建期解析自身的构建依赖
+（setuptools）时走的是**配置的 index**，绕过锁文件。所以 Dockerfile 里同时设了
+`ENV UV_DEFAULT_INDEX=${PYPI_INDEX}`。
+
+该结论由一次**把 pypi.org 与 files.pythonhosted.org 解析到 127.0.0.1 的黑洞构建**
+得出：只改锁文件时 `sgmllib3k` 因拉不到 setuptools 而 `Connection refused` 失败；
+补上 `UV_DEFAULT_INDEX` 后 581 个包全部装成。注意 `uv lock --check` **发现不了**
+这个缺口——它只验一致性，不验可达性。
+
+`PYPI_INDEX` 为空时 `UV_DEFAULT_INDEX` 会是空字符串，实测被 uv 正确忽略，
+与完全不设该变量行为一致，故默认路径不受影响。
 
 ### apt 源
 

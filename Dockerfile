@@ -16,6 +16,12 @@ ARG APT_MIRROR=
 # bare `docker build` is unaffected. Set e.g.
 # sparse+https://mirrors.ustc.edu.cn/crates.io-index/ to fetch through a mirror.
 ARG CARGO_MIRROR=
+# PyPI mirror, for machines that cannot reach pypi.org at all. Both must be set
+# together: PYPI_INDEX replaces the index recorded in uv.lock *and* the index uv
+# resolves build dependencies from; PYPI_FILES replaces the artifact host. Empty
+# (default) leaves uv.lock untouched, so a bare `docker build` is unaffected.
+ARG PYPI_INDEX=
+ARG PYPI_FILES=
 
 # Stage 1: provide Rust toolchain (required by setup.py -> build_ov_cli_artifact -> cargo build)
 # ragfs-python's default S3-enabled dependency set currently requires rustc >= 1.91.1.
@@ -91,6 +97,25 @@ WORKDIR /app
 # Copy source required for setup.py artifact builds and native extension build.
 COPY Cargo.toml Cargo.lock ./
 COPY pyproject.toml uv.lock setup.py README.md ./
+
+# Repoint uv.lock at PYPI_INDEX/PYPI_FILES. Rewriting the lockfile here rather
+# than in the repository keeps it identical to upstream while preserving the
+# strict `--locked` guarantees: package versions and all 3857 sha256 hashes are
+# untouched, because mirrors serve byte-identical artifacts.
+#
+# UV_DEFAULT_INDEX must be set as well, not just the lockfile: source
+# distributions such as sgmllib3k resolve their *build* requirements
+# (setuptools) through the configured index at build time, bypassing the lock.
+# Verified by a build with pypi.org and files.pythonhosted.org blackholed.
+ARG PYPI_INDEX
+ARG PYPI_FILES
+ENV UV_DEFAULT_INDEX=${PYPI_INDEX}
+RUN if [ -n "${PYPI_INDEX}" ]; then \
+        sed -i "s|registry = \"https://pypi.org/simple\"|registry = \"${PYPI_INDEX}\"|g" uv.lock; \
+    fi; \
+    if [ -n "${PYPI_FILES}" ]; then \
+        sed -i "s|https://files.pythonhosted.org|${PYPI_FILES}|g" uv.lock; \
+    fi
 COPY build_support/ build_support/
 COPY bot/ bot/
 COPY crates/ crates/
