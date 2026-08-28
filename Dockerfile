@@ -7,6 +7,11 @@
 ARG RUST_IMAGE=rust:1.91.1-trixie
 ARG NODE_IMAGE=node:24-trixie-slim
 ARG RUNTIME_IMAGE=python:3.13-slim-trixie
+# Debian apt mirror. Empty (default) keeps the image's own sources, so a bare
+# `docker build` is unaffected. Set e.g. http://mirrors.ustc.edu.cn to rewrite
+# the DEB822 sources. Use http:// — the runtime stage installs ca-certificates,
+# so https would be a chicken-and-egg problem there.
+ARG APT_MIRROR=
 
 # Stage 1: provide Rust toolchain (required by setup.py -> build_ov_cli_artifact -> cargo build)
 # ragfs-python's default S3-enabled dependency set currently requires rustc >= 1.91.1.
@@ -33,6 +38,19 @@ ENV PATH="/app/.venv/bin:/usr/local/cargo/bin:${PATH}"
 ARG OPENVIKING_VERSION=
 ARG TARGETPLATFORM
 ARG UV_LOCK_STRATEGY=auto
+
+# Rewrite Debian sources to APT_MIRROR when set. Trixie ships DEB822
+# (/etc/apt/sources.list.d/debian.sources); both debian and debian-security
+# live under deb.debian.org, so one substitution covers all suites.
+ARG APT_MIRROR
+RUN if [ -n "${APT_MIRROR}" ]; then \
+        for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.sources \
+                 /etc/apt/sources.list.d/*.list; do \
+            if [ -f "$f" ]; then \
+                sed -i "s|https\?://deb.debian.org|${APT_MIRROR}|g" "$f"; \
+            fi; \
+        done; \
+    fi
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
@@ -104,6 +122,19 @@ RUN --mount=type=cache,target=/root/.cache/uv,id=uv-${TARGETPLATFORM} \
 
 # Stage 3: runtime
 FROM ${RUNTIME_IMAGE}
+
+# Rewrite Debian sources to APT_MIRROR when set. Trixie ships DEB822
+# (/etc/apt/sources.list.d/debian.sources); both debian and debian-security
+# live under deb.debian.org, so one substitution covers all suites.
+ARG APT_MIRROR
+RUN if [ -n "${APT_MIRROR}" ]; then \
+        for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.sources \
+                 /etc/apt/sources.list.d/*.list; do \
+            if [ -f "$f" ]; then \
+                sed -i "s|https\?://deb.debian.org|${APT_MIRROR}|g" "$f"; \
+            fi; \
+        done; \
+    fi
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \

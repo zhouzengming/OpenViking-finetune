@@ -45,6 +45,24 @@ Docker Hub 的 rust / node / python 三个基础镜像**默认走 `docker.m.daoc
 `ghcr.io` 的 uv 镜像未参数化，仍从官方拉取（`ghcr.m.daocloud.io/astral-sh/uv:python3.13-trixie-slim`
 经验证可用，若成为瓶颈可照此参数化）。
 
+
+### apt 源
+
+Debian apt 源默认走 `http://mirrors.ustc.edu.cn`（构建容器直连 `deb.debian.org`
+在国内很慢，而构建期代理默认为空）。用镜像自带源：`OV_APT_MIRROR=`（置空）。
+
+几个实现要点：
+
+- trixie 用 DEB822 格式 `/etc/apt/sources.list.d/debian.sources`，不是老的
+  `sources.list`；且 debian 与 debian-security **都在 `deb.debian.org`**，
+  一次替换即可覆盖三个 suite。
+- 用 `http://` 而非 `https://`：运行时阶段的 `ca-certificates` 正是在这条 apt 里
+  才安装的，https 会先有鸡先有蛋。apt 包本身有 GPG 签名，不依赖 TLS。
+- compose 里用 `${OV_APT_MIRROR-...}`（单减号）而非 `:-`，这样显式置空能被尊重，
+  不会因为值为空又回落到默认。
+- 改写循环用内层 `if [ -f ]` 而不是 `[ -f ] && sed`：后者在最后一个 glob 未匹配时
+  会让整个 `RUN` 返回 1，构建直接失败。
+
 ⚠️ `COPY --from` 不做 ARG 插值，只接受字面镜像引用或 stage 名。所以 node 用的是命名
 stage `node-toolchain`，不能写成 `COPY --from=${NODE_IMAGE}`（会报 invalid reference format）。
 
