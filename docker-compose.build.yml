@@ -21,13 +21,14 @@ services:
         OPENVIKING_VERSION: ${OPENVIKING_VERSION:?请显式设置，例如 OPENVIKING_VERSION=$(git describe --tags --match 'v[0-9]*' | sed 's/^v//; s/-\([0-9]*\)-g/+\1.g/')}
         # locked = 锁文件对不上即失败（可复现）；auto = 过期则自动 uv lock
         UV_LOCK_STRATEGY: ${UV_LOCK_STRATEGY:-locked}
-        # Docker Hub 拉取慢时用一个变量整体切到镜像站，例如：
-        #   OV_DOCKERHUB=docker.m.daocloud.io docker compose ... up -d --build
-        # 默认 docker.io 即官方源，行为与不设置时一致。
-        # ghcr.io 的 uv 镜像刻意不参数化，保持从官方拉取。
-        RUST_IMAGE: ${OV_DOCKERHUB:-docker.io}/library/rust:1.91.1-trixie
-        NODE_IMAGE: ${OV_DOCKERHUB:-docker.io}/library/node:24-trixie-slim
-        RUNTIME_IMAGE: ${OV_DOCKERHUB:-docker.io}/library/python:3.13-slim-trixie
+        # Docker Hub 三个基础镜像默认走 daocloud 镜像站：本机 daemon 配置里
+        # 拉取走 socks5 代理，而 no-proxy 放行了 *.daocloud.io，所以走镜像站
+        # 既换了源也绕开了代理瓶颈。回官方源用 OV_DOCKERHUB=docker.io。
+        # 注意 Dockerfile 里的 ARG 默认值仍是上游引用，裸 docker build 不受影响。
+        # ghcr.io 的 uv 镜像按需求未参数化，仍从官方拉取。
+        RUST_IMAGE: ${OV_DOCKERHUB:-docker.m.daocloud.io}/library/rust:1.91.1-trixie
+        NODE_IMAGE: ${OV_DOCKERHUB:-docker.m.daocloud.io}/library/node:24-trixie-slim
+        RUNTIME_IMAGE: ${OV_DOCKERHUB:-docker.m.daocloud.io}/library/python:3.13-slim-trixie
         # 构建期代理刻意用独立变量名，不直接读 HTTP_PROXY/HTTPS_PROXY：
         # 否则 shell 里的 socks5:// 之类会被静默继承进构建容器，而多数构建
         # 工具只认 http://，且 uv 经本地代理有僵死前科。要用时显式设置：

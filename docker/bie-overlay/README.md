@@ -33,6 +33,21 @@
 避免 shell 里的 `socks5://` 被静默继承进构建容器（多数构建工具只认 `http://`，
 且 uv 经本地代理有僵死前科）。
 
+### 基础镜像源
+
+Docker Hub 的 rust / node / python 三个基础镜像**默认走 `docker.m.daocloud.io`**。
+本机 `/etc/docker/daemon.json` 里 daemon 拉镜像走 socks5 代理，而 `no-proxy` 放行了
+`*.daocloud.io`，所以走镜像站既换了源也绕开代理瓶颈。回官方源：`OV_DOCKERHUB=docker.io`。
+
+注意这只是 compose 这层的默认值；`Dockerfile` 里 `RUST_IMAGE` / `NODE_IMAGE` /
+`RUNTIME_IMAGE` 三个 ARG 的默认值仍是上游引用，裸 `docker build` 行为不变。
+
+`ghcr.io` 的 uv 镜像未参数化，仍从官方拉取（`ghcr.m.daocloud.io/astral-sh/uv:python3.13-trixie-slim`
+经验证可用，若成为瓶颈可照此参数化）。
+
+⚠️ `COPY --from` 不做 ARG 插值，只接受字面镜像引用或 stage 名。所以 node 用的是命名
+stage `node-toolchain`，不能写成 `COPY --from=${NODE_IMAGE}`（会报 invalid reference format）。
+
 新机器需要：BuildKit（Dockerfile 用了 `--mount=type=cache`）、约 15GB 磁盘、
 crates.io + npm + PyPI 三个源可达。**不需要** submodule，依赖全部 vendored。
 
