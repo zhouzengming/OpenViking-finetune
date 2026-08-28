@@ -1,8 +1,20 @@
 # syntax=docker/dockerfile:1.9
 
+# Base images are parameterized so a slow registry can be swapped for a mirror
+# without editing this file. Defaults are the upstream references, so a bare
+# `docker build` behaves exactly as before. The ghcr.io uv image is intentionally
+# left hardcoded. Global ARGs declared here are usable in every FROM below.
+ARG RUST_IMAGE=rust:1.91.1-trixie
+ARG NODE_IMAGE=node:24-trixie-slim
+ARG RUNTIME_IMAGE=python:3.13-slim-trixie
+
 # Stage 1: provide Rust toolchain (required by setup.py -> build_ov_cli_artifact -> cargo build)
 # ragfs-python's default S3-enabled dependency set currently requires rustc >= 1.91.1.
-FROM rust:1.91.1-trixie AS rust-toolchain
+FROM ${RUST_IMAGE} AS rust-toolchain
+
+# Stage 1b: Node.js toolchain. A named stage is required because COPY --from
+# does not interpolate ARGs; only a literal image reference or stage name.
+FROM ${NODE_IMAGE} AS node-toolchain
 
 # Stage 2: build Python environment with uv (builds Rust CLI + C++ extension + web-studio from source)
 FROM ghcr.io/astral-sh/uv:python3.13-trixie-slim AS py-builder
@@ -11,8 +23,8 @@ FROM ghcr.io/astral-sh/uv:python3.13-trixie-slim AS py-builder
 COPY --from=rust-toolchain /usr/local/cargo /usr/local/cargo
 COPY --from=rust-toolchain /usr/local/rustup /usr/local/rustup
 # Provide Node.js so setup.py build_py can build web-studio SPA in-tree.
-COPY --from=node:24-trixie-slim /usr/local/bin/node /usr/local/bin/
-COPY --from=node:24-trixie-slim /usr/local/lib/node_modules/ /usr/local/lib/node_modules/
+COPY --from=node-toolchain /usr/local/bin/node /usr/local/bin/
+COPY --from=node-toolchain /usr/local/lib/node_modules/ /usr/local/lib/node_modules/
 RUN ln -sf ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
  && ln -sf ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
 ENV CARGO_HOME=/usr/local/cargo
@@ -91,7 +103,7 @@ RUN --mount=type=cache,target=/root/.cache/uv,id=uv-${TARGETPLATFORM} \
     esac
 
 # Stage 3: runtime
-FROM python:3.13-slim-trixie
+FROM ${RUNTIME_IMAGE}
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
