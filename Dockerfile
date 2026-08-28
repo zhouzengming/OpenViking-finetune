@@ -1,12 +1,13 @@
 # syntax=docker/dockerfile:1.9
 
-# Base images are parameterized so a slow registry can be swapped for a mirror
-# without editing this file. Defaults are the upstream references, so a bare
-# `docker build` behaves exactly as before. The ghcr.io uv image is intentionally
-# left hardcoded. Global ARGs declared here are usable in every FROM below.
+# Base images are parameterized so a slow or unreachable registry can be swapped
+# for a mirror without editing this file. Defaults are the upstream references, so
+# a bare `docker build` behaves exactly as before. Global ARGs declared here are
+# usable in every FROM below.
 ARG RUST_IMAGE=rust:1.91.1-trixie
 ARG NODE_IMAGE=node:24-trixie-slim
 ARG RUNTIME_IMAGE=python:3.13-slim-trixie
+ARG UV_IMAGE=ghcr.io/astral-sh/uv:python3.13-trixie-slim
 # Debian apt mirror. Empty (default) keeps the image's own sources, so a bare
 # `docker build` is unaffected. Set e.g. http://mirrors.ustc.edu.cn to rewrite
 # the DEB822 sources. Use http:// — the runtime stage installs ca-certificates,
@@ -32,7 +33,7 @@ FROM ${RUST_IMAGE} AS rust-toolchain
 FROM ${NODE_IMAGE} AS node-toolchain
 
 # Stage 2: build Python environment with uv (builds Rust CLI + C++ extension + web-studio from source)
-FROM ghcr.io/astral-sh/uv:python3.13-trixie-slim AS py-builder
+FROM ${UV_IMAGE} AS py-builder
 
 # Reuse Rust toolchain from stage 1 so setup.py can compile ov CLI in-place.
 COPY --from=rust-toolchain /usr/local/cargo /usr/local/cargo
