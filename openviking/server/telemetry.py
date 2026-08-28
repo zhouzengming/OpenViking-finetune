@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from typing import Any, Awaitable, Callable, Optional
 
-from openviking.server.request_guard import SupportsIsDisconnected, run_guarded
+from openviking.server.request_guard import SupportsReceive, run_guarded
 from openviking.telemetry import TelemetryRequest, TelemetrySelection
 from openviking.telemetry.execution import (
     TelemetryExecutionResult,
@@ -33,7 +33,7 @@ async def run_operation(
     operation: str,
     telemetry: TelemetryRequest,
     fn: Callable[[], Awaitable[Any]],
-    http_request: Optional[SupportsIsDisconnected] = None,
+    http_request: Optional[SupportsReceive] = None,
 ) -> TelemetryExecutionResult[Any]:
     """Execute a router operation with request-scoped telemetry.
 
