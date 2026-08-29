@@ -5,6 +5,9 @@
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import pytest
+
+from openviking.models.rerank.errors import RerankError
 from openviking.models.rerank.litellm_rerank import LiteLLMRerankClient
 
 
@@ -68,9 +71,9 @@ class TestLiteLLMRerankClient:
         assert scores == [0.4, 0.6]
 
     @patch("litellm.rerank")
-    def test_missing_index_falls_back_to_none(self, mock_rerank):
-        # A result item lacking an index must trigger the safe no-op fallback
-        # (caller then keeps the pre-rerank order) rather than mis-mapping.
+    def test_missing_index_is_reported_as_a_rerank_error(self, mock_rerank):
+        # A result item lacking an index must be reported rather than
+        # mis-mapped; the caller then keeps the pre-rerank order.
         mock_rerank.return_value = _make_response(
             [
                 {"relevance_score": 0.9},
@@ -79,7 +82,8 @@ class TestLiteLLMRerankClient:
         )
 
         client = LiteLLMRerankClient(api_key="k", api_base=None, model_name="voyage/rerank-2.5")
-        assert client.rerank_batch("q", ["a", "b"]) is None
+        with pytest.raises(RerankError):
+            client.rerank_batch("q", ["a", "b"])
 
     @patch("litellm.rerank")
     def test_empty_documents_short_circuits(self, mock_rerank):

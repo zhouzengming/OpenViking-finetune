@@ -8,6 +8,7 @@ import pytest
 from pydantic import ValidationError
 
 from openviking.models.rerank import OpenAIRerankClient, RerankClient
+from openviking.models.rerank.errors import RerankError
 from openviking_cli.utils.config.rerank_config import RerankConfig
 
 
@@ -67,7 +68,7 @@ class TestOpenAIRerankClient:
         scores = client.rerank_batch("query", [])
         assert scores == []
 
-    def test_rerank_batch_unexpected_format_returns_none(self):
+    def test_rerank_batch_unexpected_format_is_reported(self):
         client = self._make_client()
         mock_response = MagicMock()
         mock_response.json.return_value = {"unexpected": "format"}
@@ -76,9 +77,8 @@ class TestOpenAIRerankClient:
         with patch(
             "openviking.models.rerank.openai_rerank.requests.post", return_value=mock_response
         ):
-            result = client.rerank_batch("query", ["doc1"])
-
-        assert result is None
+            with pytest.raises(RerankError):
+                client.rerank_batch("query", ["doc1"])
 
     def test_rerank_batch_leaves_unreturned_documents_unscored(self):
         client = self._make_client()
@@ -93,9 +93,12 @@ class TestOpenAIRerankClient:
         }
         mock_response.raise_for_status = MagicMock()
 
-        with patch(
-            "openviking.models.rerank.openai_rerank.requests.post", return_value=mock_response
-        ), patch("openviking.models.rerank.openai_rerank.logger.warning") as warning:
+        with (
+            patch(
+                "openviking.models.rerank.openai_rerank.requests.post", return_value=mock_response
+            ),
+            patch("openviking.models.rerank.openai_rerank.logger.warning") as warning,
+        ):
             result = client.rerank_batch("query", ["doc1", "doc2", "doc3"])
 
         # doc2 was not in the response: None, not a fabricated 0.0 that any
@@ -105,7 +108,7 @@ class TestOpenAIRerankClient:
             "[OpenAIRerankClient] Sparse rerank results: expected=%s actual=%s", 3, 2
         )
 
-    def test_rerank_batch_out_of_bounds_index_returns_none(self):
+    def test_rerank_batch_out_of_bounds_index_is_reported(self):
         """An index that is >= len(documents) should return None."""
         client = self._make_client()
         mock_response = MagicMock()
@@ -121,12 +124,11 @@ class TestOpenAIRerankClient:
         with patch(
             "openviking.models.rerank.openai_rerank.requests.post", return_value=mock_response
         ):
-            result = client.rerank_batch("query", ["doc1"])
+            with pytest.raises(RerankError):
+                client.rerank_batch("query", ["doc1"])
 
-        assert result is None
-
-    def test_rerank_batch_missing_index_field_returns_none(self):
-        """A result item with no 'index' key should return None."""
+    def test_rerank_batch_missing_index_field_is_reported(self):
+        """A result item with no 'index' key must be reported, not mis-mapped."""
         client = self._make_client()
         mock_response = MagicMock()
         mock_response.json.return_value = {
@@ -141,20 +143,18 @@ class TestOpenAIRerankClient:
         with patch(
             "openviking.models.rerank.openai_rerank.requests.post", return_value=mock_response
         ):
-            result = client.rerank_batch("query", ["doc1"])
+            with pytest.raises(RerankError):
+                client.rerank_batch("query", ["doc1"])
 
-        assert result is None
-
-    def test_rerank_batch_http_error_returns_none(self):
+    def test_rerank_batch_http_error_is_reported(self):
         client = self._make_client()
 
         with patch(
             "openviking.models.rerank.openai_rerank.requests.post",
             side_effect=Exception("connection error"),
         ):
-            result = client.rerank_batch("query", ["doc1"])
-
-        assert result is None
+            with pytest.raises(RerankError):
+                client.rerank_batch("query", ["doc1"])
 
     def test_rerank_batch_sends_correct_request(self):
         client = self._make_client()

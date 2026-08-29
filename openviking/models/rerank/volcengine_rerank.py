@@ -18,6 +18,8 @@ from volcengine.base.Request import Request
 from volcengine.Credentials import Credentials
 
 from openviking.models.rerank.base import RerankBase
+from openviking.models.rerank.errors import RerankError, rerank_error_from_exception
+from openviking.utils.model_retry import ERROR_CLASS_PERMANENT
 from openviking_cli.utils import get_logger
 
 logger = get_logger(__name__)
@@ -85,7 +87,7 @@ class RerankClient(RerankBase):
         SignerV4.sign(r, credentials)
         return r
 
-    def rerank_batch(self, query: str, documents: List[str]) -> Optional[List[float]]:
+    def rerank_batch(self, query: str, documents: List[str]) -> List[Optional[float]]:
         """
         Batch rerank documents against a query.
 
@@ -94,8 +96,11 @@ class RerankClient(RerankBase):
             documents: List of document texts to rank
 
         Returns:
-            List of rerank scores for each document (same order as input),
-            or None when rerankver fails and the caller should fall back
+            One entry per input document, in input order: the rerank score.
+
+        Raises:
+            RerankError: The call failed; ``error_class`` says whether retrying
+                could help.
         """
         if not documents:
             return []
@@ -127,40 +132,41 @@ class RerankClient(RerankBase):
 
             try:
                 result = response.json()
-            except Exception:
-                logger.warning(
-                    "[RerankClient] Non-JSON response: status=%s body=%s",
-                    response.status_code,
-                    response.text[:1000],
-                )
-                return None
+            except Exception as e:
+                raise RerankError(
+                    f"Non-JSON response: status={response.status_code} body={response.text[:1000]}",
+                    provider=self.provider,
+                    error_class=ERROR_CLASS_PERMANENT,
+                    status_code=response.status_code,
+                ) from e
 
             if not isinstance(result, dict):
-                logger.warning(
-                    "[RerankClient] Unexpected response type: status=%s type=%s body=%s",
-                    response.status_code,
-                    type(result).__name__,
-                    str(result)[:1000],
+                raise RerankError(
+                    f"Unexpected response type: status={response.status_code} "
+                    f"type={type(result).__name__} body={str(result)[:1000]}",
+                    provider=self.provider,
+                    error_class=ERROR_CLASS_PERMANENT,
+                    status_code=response.status_code,
                 )
-                return None
 
             result_payload = result.get("result")
             if not isinstance(result_payload, dict):
-                logger.warning(
-                    "[RerankClient] Unexpected response payload: status=%s result_type=%s body=%s",
-                    response.status_code,
-                    type(result_payload).__name__,
-                    str(result)[:1000],
+                raise RerankError(
+                    f"Unexpected response payload: status={response.status_code} "
+                    f"result_type={type(result_payload).__name__} body={str(result)[:1000]}",
+                    provider=self.provider,
+                    error_class=ERROR_CLASS_PERMANENT,
+                    status_code=response.status_code,
                 )
-                return None
 
             if "data" not in result_payload:
-                logger.warning(
-                    "[RerankClient] Missing rerank data field: status=%s body=%s",
-                    response.status_code,
-                    str(result)[:1000],
+                raise RerankError(
+                    f"Missing rerank data field: status={response.status_code} "
+                    f"body={str(result)[:1000]}",
+                    provider=self.provider,
+                    error_class=ERROR_CLASS_PERMANENT,
+                    status_code=response.status_code,
                 )
-                return None
 
             # Update token usage tracking (estimate, VikingDB doesn't provide token info)
             self._extract_and_update_token_usage(
@@ -176,35 +182,45 @@ class RerankClient(RerankBase):
             # positional reading.
             data = result_payload["data"]
             if len(data) != len(documents):
-                logger.warning(
-                    "[RerankClient] Unexpected rerank result length: expected=%s actual=%s",
-                    len(documents),
-                    len(data),
+                raise RerankError(
+                    f"Unexpected rerank result length: expected={len(documents)} "
+                    f"actual={len(data)}",
+                    provider=self.provider,
+                    error_class=ERROR_CLASS_PERMANENT,
                 )
-                return None
 
             scores = [0.0] * len(documents)
             assigned: set[int] = set()
             for position, item in enumerate(data):
                 index = item.get("id", position)
                 if not isinstance(index, int) or isinstance(index, bool):
-                    logger.warning("[RerankClient] Non-integer id in rerank item: %s", item)
-                    return None
+                    raise RerankError(
+                        f"Non-integer id in rerank item: {item}",
+                        provider=self.provider,
+                        error_class=ERROR_CLASS_PERMANENT,
+                    )
                 if not (0 <= index < len(documents)):
-                    logger.warning("[RerankClient] Out-of-bounds id in rerank item: %s", item)
-                    return None
+                    raise RerankError(
+                        f"Out-of-bounds id in rerank item: {item}",
+                        provider=self.provider,
+                        error_class=ERROR_CLASS_PERMANENT,
+                    )
                 if index in assigned:
-                    logger.warning("[RerankClient] Duplicate id in rerank result: %s", item)
-                    return None
+                    raise RerankError(
+                        f"Duplicate id in rerank result: {item}",
+                        provider=self.provider,
+                        error_class=ERROR_CLASS_PERMANENT,
+                    )
                 assigned.add(index)
                 scores[index] = item.get("score", 0.0)
 
             logger.debug(f"[RerankClient] Reranked {len(documents)} documents")
             return scores
 
+        except RerankError:
+            raise
         except Exception as e:
-            logger.error(f"[RerankClient] Rerank failed: {e}")
-            return None
+            raise rerank_error_from_exception(e, provider=self.provider) from e
 
     @classmethod
     def from_config(cls, config) -> Optional["RerankClient"]:
