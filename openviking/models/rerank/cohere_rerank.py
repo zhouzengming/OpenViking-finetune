@@ -4,7 +4,7 @@
 Cohere Rerank API Client.
 
 Drop-in replacement for VikingDB RerankClient, using Cohere's Rerank v3.5 API.
-Same interface: rerank_batch(query, documents) -> List[float]
+Same interface: rerank_batch(query, documents) -> List[Optional[float]]
 """
 
 # For logging, use Python's built-in logging
@@ -42,7 +42,7 @@ class CohereRerankClient(RerankBase):
             timeout=30.0,
         )
 
-    def rerank_batch(self, query: str, documents: List[str]) -> Optional[List[float]]:
+    def rerank_batch(self, query: str, documents: List[str]) -> Optional[List[Optional[float]]]:
         """
         Rerank documents against a query using Cohere Rerank API.
 
@@ -51,8 +51,10 @@ class CohereRerankClient(RerankBase):
             documents: List of document texts to rank
 
         Returns:
-            List of relevance scores (0-1) in same order as input documents,
-            or None on failure (caller should fall back to vector scores).
+            One entry per input document, in input order: the relevance score
+            (0-1), or None where Cohere returned no score for that document.
+            None instead of a list on failure (caller should fall back to
+            vector scores).
         """
         if not documents:
             return []
@@ -80,11 +82,33 @@ class CohereRerankClient(RerankBase):
                 duration_seconds=time.monotonic() - started,
             )
 
-            # Cohere returns results sorted by score desc with index field
-            # We need to map back to original order
-            scores = [0.0] * len(documents)
-            for result in data.get("results", []):
-                idx = result["index"]
+            # Cohere returns results sorted by score desc with an index field,
+            # so map back to original order. A document Cohere left out stays
+            # None: the caller keeps its vector score rather than being handed
+            # a fabricated 0.0 that any threshold would prune.
+            results = data.get("results", [])
+            if len(results) != len(documents):
+                logger.warning(
+                    "[CohereRerank] Sparse rerank results: expected=%s actual=%s",
+                    len(documents),
+                    len(results),
+                )
+
+            scores: List[Optional[float]] = [None] * len(documents)
+            for result in results:
+                idx = result.get("index") if isinstance(result, dict) else None
+                # bool is an int subclass, and `scores[True]` would silently
+                # score document 1; a negative index would silently score a
+                # document counted from the end.
+                if not isinstance(idx, int) or isinstance(idx, bool):
+                    logger.warning("[CohereRerank] Non-integer index in result: %s", result)
+                    return None
+                if not (0 <= idx < len(documents)):
+                    logger.warning("[CohereRerank] Out-of-bounds index in result: %s", result)
+                    return None
+                if "relevance_score" not in result:
+                    logger.warning("[CohereRerank] Missing relevance_score in result: %s", result)
+                    return None
                 scores[idx] = result["relevance_score"]
 
             logger.debug(f"[CohereRerank] Reranked {len(documents)} documents")

@@ -434,6 +434,13 @@ def rerank_single_search_contexts(
             (f"invalid_score_count: expected {len(contexts)}, got {len(scores) if scores else 0}"),
         )
 
+    # A provider reports None for a document the rerank service left unscored.
+    # A partial ranking is not comparable across runs, so fall back to the
+    # retrieval order for the whole batch and say so.
+    unscored = sum(1 for score in scores if score is None)
+    if unscored:
+        return contexts, [], f"unscored_documents: {unscored}/{len(scores)}"
+
     ranked_contexts = []
     rerank_scores = []
     for context, score in zip(contexts, scores, strict=True):

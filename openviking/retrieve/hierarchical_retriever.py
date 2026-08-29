@@ -389,8 +389,27 @@ class HierarchicalRetriever:
             return fallback_scores
 
         normalized_scores = list(fallback_scores)
+        unscored = 0
         for score, (index, _) in zip(scores, rerank_documents, strict=True):
+            if score is None:
+                # The provider reports None for a document the rerank service
+                # left out of its response. Keeping the vector score preserves
+                # the ranking that was computed for the rest of the batch.
+                unscored += 1
+                continue
             normalized_scores[index] = self._finite_score(score, fallback_scores[index])
+
+        telemetry = get_current_telemetry()
+        telemetry.count("rerank.calls", 1)
+        telemetry.count("rerank.documents", len(rerank_documents))
+        telemetry.count("rerank.unscored_docs", unscored)
+        if unscored:
+            logger.warning(
+                "[HierarchicalRetriever] %s/%s documents unscored by rerank, "
+                "kept their vector score",
+                unscored,
+                len(rerank_documents),
+            )
         return normalized_scores
 
     async def _recursive_search(
