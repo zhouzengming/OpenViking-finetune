@@ -354,6 +354,7 @@ class TelemetrySummaryBuilder:
                 "calls": cls._i(counters.get("rerank.calls"), 0),
                 "documents": cls._i(counters.get("rerank.documents"), 0),
                 "unscored_docs": cls._i(counters.get("rerank.unscored_docs"), 0),
+                "retries": cls._i(counters.get("rerank.retries"), 0),
             }
 
         if cls._has_metric_prefix("semantic_nodes", counters, gauges):

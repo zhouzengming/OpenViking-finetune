@@ -144,6 +144,7 @@ API 型 `embedding`、`vlm`、`query_planner` 和 `rerank` 配置会复用部分
 | `model` | string / `null` | `null` | OpenAI 兼容或 LiteLLM Rerank 模型 |
 | `threshold` | number | `0.1` | 判定结果相关的最低分数 |
 | `max_input_tokens` | integer；`0` 或 `>= 128` | `0` | 每个 query-document pair 的最大估算 token；`0` 表示不截断 |
+| `max_retries` | integer；`0`–`10` | `0` | 遇限流/瞬时故障后的额外重试次数（指数退避并遵循 `Retry-After`）。`0` 表示立即放弃并回退到向量分；调高是用检索请求内的延迟换排序质量。鉴权失败、参数错误等重试也无用的错误不会重试 |
 
 Rerank 没有单独的 `enabled` 字段；配置了对应 provider 所需的凭证后才会启用。
 
