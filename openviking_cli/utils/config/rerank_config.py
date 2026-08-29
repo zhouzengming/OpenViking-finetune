@@ -67,6 +67,16 @@ class RerankConfig(BaseModel):
         ),
     )
 
+    max_concurrency: int = Field(
+        default=0,
+        ge=0,
+        le=256,
+        description=(
+            "Size of the dedicated rerank thread pool; 0 uses the same size as "
+            "the shared default executor it replaces. Takes effect at startup"
+        ),
+    )
+
     max_input_tokens: int = Field(
         default=0,
         ge=0,

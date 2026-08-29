@@ -8,6 +8,8 @@ and rerank-based relevance scoring.
 """
 
 import asyncio
+import contextvars
+import functools
 import heapq
 import logging
 import math
@@ -20,6 +22,7 @@ from openviking.core.retrieval_targets import default_target_directories
 from openviking.models.embedder.base import EmbedResult, embed_compat
 from openviking.models.rerank import RerankClient
 from openviking.models.rerank.errors import RerankError
+from openviking.models.rerank.executor import get_rerank_executor
 from openviking.retrieve.memory_lifecycle import hotness_score
 from openviking.retrieve.retrieval_stats import get_stats_collector
 from openviking.server.identity import RequestContext
@@ -89,6 +92,7 @@ class HierarchicalRetriever:
         self.rerank_config = rerank_config
         self.rerank_max_input_tokens = rerank_config.max_input_tokens if rerank_config else 0
         self.rerank_on_failure = rerank_config.on_failure if rerank_config else "fallback"
+        self.rerank_max_concurrency = rerank_config.max_concurrency if rerank_config else 0
         self.retrieval_config = retrieval_config or RetrievalConfig()
         self.hotness_alpha = self.retrieval_config.hotness_alpha
         self.score_propagation_alpha = self.retrieval_config.score_propagation_alpha
@@ -354,6 +358,23 @@ class HierarchicalRetriever:
             return score >= threshold
         return score > threshold
 
+    async def _call_rerank_client(
+        self, query: str, documents: List[str]
+    ) -> Optional[List[Optional[float]]]:
+        """Run the blocking provider call on rerank's own thread pool.
+
+        ``run_in_executor`` does not carry contextvars the way
+        ``asyncio.to_thread`` does, so the context is copied explicitly —
+        without it the telemetry bound to this request would not be reachable
+        from the worker thread, and retry counters would vanish.
+        """
+        context = contextvars.copy_context()
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            get_rerank_executor(self.rerank_max_concurrency),
+            functools.partial(context.run, self._rerank_client.rerank_batch, query, documents),
+        )
+
     def _handle_rerank_failure(self, error: Exception, fallback_scores: List[float]) -> List[float]:
         """Record a failed rerank, then degrade — or refuse, if configured to.
 
@@ -420,10 +441,8 @@ class HierarchicalRetriever:
             ]
 
         try:
-            scores = await asyncio.to_thread(
-                self._rerank_client.rerank_batch,
-                rerank_query,
-                [document for _, document in rerank_documents],
+            scores = await self._call_rerank_client(
+                rerank_query, [document for _, document in rerank_documents]
             )
         except Exception as e:
             return self._handle_rerank_failure(e, fallback_scores)

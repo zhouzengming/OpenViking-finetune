@@ -13,7 +13,6 @@ import logging
 import pytest
 
 from openviking.models.rerank.errors import RerankError
-from openviking.retrieve.hierarchical_retriever import HierarchicalRetriever
 from openviking.utils.model_retry import ERROR_CLASS_TRANSIENT
 
 
@@ -23,14 +22,6 @@ class _Failing:
 
     def rerank_batch(self, query, documents):
         raise self._error
-
-
-def _retriever(error):
-    retriever = HierarchicalRetriever.__new__(HierarchicalRetriever)
-    retriever._rerank_client = _Failing(error)
-    retriever.rerank_max_input_tokens = 0
-    retriever.rerank_on_failure = "fallback"
-    return retriever
 
 
 @pytest.mark.asyncio
@@ -44,8 +35,8 @@ def _retriever(error):
     ],
     ids=["typed", "untyped"],
 )
-async def test_the_vector_scores_survive_any_provider_failure(error):
-    retriever = _retriever(error)
+async def test_the_vector_scores_survive_any_provider_failure(error, make_rerank_retriever):
+    retriever = make_rerank_retriever(_Failing(error))
 
     scores = await retriever._rerank_scores("q", ["a", "b"], [0.31, 0.42])
 
@@ -53,11 +44,15 @@ async def test_the_vector_scores_survive_any_provider_failure(error):
 
 
 @pytest.mark.asyncio
-async def test_the_error_class_reaches_the_log():
+async def test_the_error_class_reaches_the_log(make_rerank_retriever):
     # Without the class in the log, a rate limit and a dead credential look
     # identical to whoever is reading it.
-    retriever = _retriever(
-        RerankError("quota", provider="openai", error_class=ERROR_CLASS_TRANSIENT, status_code=429)
+    retriever = make_rerank_retriever(
+        _Failing(
+            RerankError(
+                "quota", provider="openai", error_class=ERROR_CLASS_TRANSIENT, status_code=429
+            )
+        )
     )
     records = []
     handler = logging.Handler()
