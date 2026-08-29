@@ -29,6 +29,7 @@ def _retriever(scores):
     retriever = HierarchicalRetriever.__new__(HierarchicalRetriever)
     retriever._rerank_client = _Client(scores)
     retriever.rerank_max_input_tokens = 0
+    retriever.rerank_on_failure = "fallback"
     return retriever
 
 

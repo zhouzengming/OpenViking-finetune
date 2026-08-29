@@ -1,6 +1,6 @@
 # Copyright (c) 2026 Beijing Volcano Engine Technology Co., Ltd.
 # SPDX-License-Identifier: AGPL-3.0
-from typing import Dict, Optional
+from typing import Dict, Literal, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -55,6 +55,15 @@ class RerankConfig(BaseModel):
             "Extra attempts after a rate-limited or transient rerank failure. "
             "0 (default) gives up immediately and falls back to vector scores; "
             "raising it trades latency inside a live search for ranking quality"
+        ),
+    )
+
+    on_failure: Literal["fallback", "error"] = Field(
+        default="fallback",
+        description=(
+            "What a failed rerank call does. 'fallback' (default) degrades to "
+            "vector scores and still answers; 'error' refuses the request "
+            "rather than serve a silently worse ranking"
         ),
     )
 
