@@ -42,6 +42,7 @@ from openviking.storage.queuefs.semantic_queue import is_semantic_msg_stale
 from openviking.storage.semantic_sidecar import (
     SemanticSidecarFormatError,
     body_for_preview,
+    body_for_preview_lenient,
     deterministic_sample,
     freshness_metadata,
     mark_semantic_sidecars_pending,
@@ -71,6 +72,44 @@ class RequestQueueStats:
     processed: int = 0
     requeue_count: int = 0
     error_count: int = 0
+
+
+_FENCE_RE = re.compile(r"^```[^\n]*\n(?P<body>.*?)\n?```\s*$", re.DOTALL)
+_LEADING_RULE_RE = re.compile(r"\A(?:[-*_]{3,}[ \t]*(?:\n\s*|\Z))+")
+
+
+def sanitize_generated_summary(summary: str) -> str:
+    """Strip framing a model wraps around a summary before it becomes a body.
+
+    The result is embedded verbatim into an OKF sidecar, and
+    ``parse_semantic_sidecar`` distinguishes an OKF document from plain text by
+    whether the first line is ``---``. A summary opening with a horizontal rule
+    therefore yields a body that later parses as a document whose frontmatter is
+    never closed. Fenced blocks and invented frontmatter are removed for the same
+    reason: they are the model framing its answer, not summary content.
+
+    Only *leading* framing is removed. A rule between paragraphs is real content.
+    """
+    if not summary:
+        return ""
+
+    text = summary.strip()
+    fenced = _FENCE_RE.match(text)
+    if fenced:
+        text = fenced.group("body").strip()
+
+    # Frontmatter the model invented: a closed --- block at the very start.
+    if text.startswith("---"):
+        lines = text.splitlines()
+        for index in range(1, len(lines)):
+            if lines[index].rstrip() == "---":
+                candidate = "\n".join(lines[index + 1 :]).strip()
+                if candidate:
+                    text = candidate
+                break
+
+    text = _LEADING_RULE_RE.sub("", text).strip()
+    return text
 
 
 class SemanticProcessor(DequeueHandlerBase):
@@ -950,7 +989,7 @@ class SemanticProcessor(DequeueHandlerBase):
             async with llm_sem:
                 with bind_telemetry_stage("resource_summarize"):
                     summary = await vlm.get_completion_async(prompt)
-            return result(summary.strip())
+            return result(sanitize_generated_summary(summary))
 
         if not vlm.is_available():
             logger.warning("VLM not available, using empty summary")
@@ -972,7 +1011,7 @@ class SemanticProcessor(DequeueHandlerBase):
         async with llm_sem:
             with bind_telemetry_stage("resource_summarize"):
                 summary = await vlm.get_completion_async(prompt)
-        return result(summary.strip())
+        return result(sanitize_generated_summary(summary))
 
     async def _generate_single_file_summary(
         self,
@@ -1052,7 +1091,7 @@ class SemanticProcessor(DequeueHandlerBase):
 
     def _extract_abstract_from_overview(self, overview_content: str) -> str:
         """Extract an abstract from the Markdown overview brief description."""
-        overview_content = body_for_preview(overview_content)
+        overview_content = body_for_preview_lenient(overview_content)
         lines = overview_content.split("\n")
 
         # Skip header lines (starting with #)
@@ -1076,7 +1115,7 @@ class SemanticProcessor(DequeueHandlerBase):
 
     def _normalize_overview_generation(self, generated_content: str) -> Tuple[str, str]:
         """Convert raw Markdown overview output into final L1 overview and L0 abstract."""
-        overview = body_for_preview(generated_content)
+        overview = body_for_preview_lenient(generated_content)
         abstract = self._extract_abstract_from_overview(overview)
         return self._enforce_size_limits(overview, abstract)
 
@@ -1102,7 +1141,7 @@ class SemanticProcessor(DequeueHandlerBase):
 
         summaries: Dict[str, str] = {}
 
-        overview_content = body_for_preview(overview_content)
+        overview_content = body_for_preview_lenient(overview_content)
         if not overview_content or not overview_content.strip():
             return summaries
 
