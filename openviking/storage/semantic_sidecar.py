@@ -274,6 +274,32 @@ def body_for_preview(raw: str | bytes) -> str:
     return document.body.rstrip("\r\n")
 
 
+def body_for_preview_lenient(raw: str | bytes) -> str:
+    """Return user-visible Markdown, accepting content that is already body-only.
+
+    ``parse_semantic_sidecar`` decides "is this an OKF document?" purely from
+    whether the first line is ``---``. That is ambiguous: ``---`` is also a
+    Markdown horizontal rule, so a plain body opening with one is read as an OKF
+    document whose frontmatter never closes, and the strict accessor raises.
+
+    Callers that hold content of *unknown* provenance — an index record that may
+    be a legacy full sidecar or an already-stripped body — need the reduction to
+    happen only when the content really is a sidecar. A parse failure here means
+    "not an OKF document", which for those callers means "already body-only", so
+    the content is returned untouched rather than failing the whole operation.
+
+    Use :func:`body_for_preview` instead wherever the input is known to be a raw
+    sidecar and a malformed one should be surfaced.
+    """
+
+    try:
+        return body_for_preview(raw)
+    except SemanticSidecarFormatError:
+        if isinstance(raw, bytes):
+            return raw.decode("utf-8", errors="replace")
+        return raw
+
+
 def body_for_embedding(
     raw: str | bytes,
     whitelist: Sequence[str] = EMBEDDING_METADATA_FIELDS,
