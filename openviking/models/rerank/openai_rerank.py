@@ -90,12 +90,16 @@ class OpenAIRerankClient(RerankBase):
                 },
                 "parameters": {
                     "return_documents": False,
+                    # Without top_n a service applies its own default and
+                    # returns a partial ranking, leaving the rest unscored.
+                    "top_n": len(documents),
                 },
             }
         return {
             "model": self.model_name,
             "query": query,
             "documents": documents,
+            "top_n": len(documents),
         }
 
     def _extract_results(self, response_json: dict) -> Optional[List[dict]]:
@@ -112,7 +116,7 @@ class OpenAIRerankClient(RerankBase):
             return None
         return response_json.get("results")
 
-    def rerank_batch(self, query: str, documents: List[str]) -> Optional[List[float]]:
+    def rerank_batch(self, query: str, documents: List[str]) -> Optional[List[Optional[float]]]:
         """
         Batch rerank documents against a query.
 
@@ -121,8 +125,10 @@ class OpenAIRerankClient(RerankBase):
             documents: List of document texts to rank
 
         Returns:
-            List of rerank scores for each document (same order as input),
-            or None when rerank fails and the caller should fall back
+            One entry per input document, in input order: the rerank score, or
+            None where the service returned no score for that document. None
+            instead of a list when the whole call fails and the caller should
+            fall back.
         """
         if not documents:
             return []
@@ -161,11 +167,12 @@ class OpenAIRerankClient(RerankBase):
                     len(results),
                 )
 
-            # Results may be sparse or out of order. Missing documents keep a
-            # zero score while returned scores map back to their input indexes.
+            # Results may be sparse or out of order. A document the service
+            # left out stays None so the caller can keep its vector score; a
+            # fabricated 0.0 would instead prune it against any threshold.
             # Both "relevance_score" (singular) and "relevance_scores" (plural)
             # are accepted — DashScope uses the singular form.
-            scores = [0.0] * len(documents)
+            scores: List[Optional[float]] = [None] * len(documents)
             for item in results:
                 idx = item.get("index")
                 if idx is None or not (0 <= idx < len(documents)):

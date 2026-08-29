@@ -274,8 +274,8 @@ class TestRerankBatch:
         )
         assert client.rerank_batch("hello", []) == []
 
-    def test_sparse_results_fill_zero(self):
-        """Sparse results: missing indexes should get score 0.0."""
+    def test_sparse_results_leave_missing_indexes_unscored(self):
+        """Sparse results: indexes the service skipped are reported as None."""
         client = OpenAIRerankClient(
             api_key="sk-test",
             api_base="https://api.openai.com/v1/rerank",
@@ -295,7 +295,7 @@ class TestRerankBatch:
         with patch("openviking.models.rerank.openai_rerank.requests.post", return_value=mock_response):
             scores = client.rerank_batch("hello", ["doc0", "doc1", "doc2"])
 
-        assert scores == [0.0, 0.55, 0.0]
+        assert scores == [None, 0.55, None]
 
     def test_existing_dashscope_native_tests_still_pass(self):
         """The existing test suite uses /api/v1/services/rerank as api_base.

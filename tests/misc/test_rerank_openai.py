@@ -80,7 +80,7 @@ class TestOpenAIRerankClient:
 
         assert result is None
 
-    def test_rerank_batch_sparse_results_fill_missing_scores_with_zero(self):
+    def test_rerank_batch_leaves_unreturned_documents_unscored(self):
         client = self._make_client()
         mock_response = MagicMock()
         mock_response.json.return_value = {
@@ -98,7 +98,9 @@ class TestOpenAIRerankClient:
         ), patch("openviking.models.rerank.openai_rerank.logger.warning") as warning:
             result = client.rerank_batch("query", ["doc1", "doc2", "doc3"])
 
-        assert result == [0.9, 0.0, 0.7]
+        # doc2 was not in the response: None, not a fabricated 0.0 that any
+        # threshold would prune.
+        assert result == [0.9, None, 0.7]
         warning.assert_called_once_with(
             "[OpenAIRerankClient] Sparse rerank results: expected=%s actual=%s", 3, 2
         )
