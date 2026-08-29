@@ -16,6 +16,7 @@ from openviking.service.task_work_index import bind_task_context, get_task_conte
 from openviking.storage.semantic_sidecar import (
     SemanticSidecarFormatError,
     body_for_preview,
+    body_for_preview_lenient,
     deterministic_sample,
     freshness_metadata,
     write_semantic_sidecars,
@@ -503,7 +504,7 @@ class SemanticDagExecutor:
                         )
                         if overview_content:
                             self._overview_cache[parent_uri] = self._processor._parse_overview_md(
-                                body_for_preview(overview_content)
+                                body_for_preview_lenient(overview_content)
                             )
                         else:
                             self._overview_cache[parent_uri] = {}
