@@ -17,6 +17,7 @@ from openviking.storage.abstract_overview import (
     AbstractOverviewFormatError,
     AbstractOverviewWriteResult,
     body_for_preview,
+    body_for_preview_lenient,
     deterministic_sample,
     freshness_metadata,
     read_abstract_overview_pending_snapshot,
@@ -557,7 +558,7 @@ class SemanticDagExecutor:
                         )
                         if overview_content:
                             self._overview_cache[parent_uri] = self._processor._parse_overview_md(
-                                body_for_preview(overview_content)
+                                body_for_preview_lenient(overview_content)
                             )
                         else:
                             self._overview_cache[parent_uri] = {}

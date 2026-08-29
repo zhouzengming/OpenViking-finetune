@@ -26,7 +26,7 @@ from openviking.parse.parsers.media.utils import (
 from openviking.parse.parsers.upload_utils import is_text_file
 from openviking.server.identity import RequestContext
 from openviking.service.task_work_index import TaskWorkRejected
-from openviking.storage.abstract_overview import body_for_preview, embedding_text_for_body
+from openviking.storage.abstract_overview import body_for_preview_lenient, embedding_text_for_body
 from openviking.storage.queuefs import get_queue_manager
 from openviking.storage.queuefs.embedding_msg_converter import EmbeddingMsgConverter
 from openviking.storage.viking_fs import LS_ALL_NODES, get_viking_fs
@@ -372,8 +372,8 @@ async def vectorize_directory_meta(
     # Callers may provide either freshly generated bodies or raw sidecar bytes
     # read during reindex/import. Normalize at this shared boundary so protected
     # operational metadata never leaks into vector text or rerank scalars.
-    abstract = body_for_preview(abstract)
-    overview = body_for_preview(overview)
+    abstract = body_for_preview_lenient(abstract)
+    overview = body_for_preview_lenient(overview)
     first_enqueue_error: Optional[Exception] = None
     try:
         if not ctx:
