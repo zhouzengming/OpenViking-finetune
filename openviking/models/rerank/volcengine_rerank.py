@@ -39,6 +39,7 @@ class RerankClient(RerankBase):
         host: str = "api-vikingdb.vikingdb.cn-beijing.volces.com",
         model_name: str = "doubao-seed-rerank",
         model_version: str = "251028",
+        max_retries: int = 0,
     ):
         """
         Initialize rerank client.
@@ -49,8 +50,9 @@ class RerankClient(RerankBase):
             host: VikingDB API host
             model_name: Rerank model name
             model_version: Rerank model version
+            max_retries: Extra attempts after a retryable failure; 0 disables retrying.
         """
-        super().__init__()
+        super().__init__(max_retries=max_retries)
         self.ak = ak
         self.sk = sk
         self.host = host
@@ -87,24 +89,8 @@ class RerankClient(RerankBase):
         SignerV4.sign(r, credentials)
         return r
 
-    def rerank_batch(self, query: str, documents: List[str]) -> List[Optional[float]]:
-        """
-        Batch rerank documents against a query.
-
-        Args:
-            query: Query text
-            documents: List of document texts to rank
-
-        Returns:
-            One entry per input document, in input order: the rerank score.
-
-        Raises:
-            RerankError: The call failed; ``error_class`` says whether retrying
-                could help.
-        """
-        if not documents:
-            return []
-
+    def _rerank_once(self, query: str, documents: List[str]) -> List[Optional[float]]:
+        """One rerank call. Retrying is the base class's job."""
         # Build request body
         req_body = {
             "model_name": self.model_name,
@@ -259,4 +245,5 @@ class RerankClient(RerankBase):
             host=config.host,
             model_name=config.model_name,
             model_version=config.model_version,
+            max_retries=config.max_retries,
         )

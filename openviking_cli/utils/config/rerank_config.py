@@ -47,6 +47,17 @@ class RerankConfig(BaseModel):
         default=0.1, description="Relevance threshold (score > threshold is relevant)"
     )
 
+    max_retries: int = Field(
+        default=0,
+        ge=0,
+        le=10,
+        description=(
+            "Extra attempts after a rate-limited or transient rerank failure. "
+            "0 (default) gives up immediately and falls back to vector scores; "
+            "raising it trades latency inside a live search for ranking quality"
+        ),
+    )
+
     max_input_tokens: int = Field(
         default=0,
         ge=0,

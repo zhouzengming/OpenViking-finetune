@@ -53,6 +53,7 @@ class OpenAIRerankClient(RerankBase):
         model_name: str,
         extra_headers: Optional[Dict[str, str]] = None,
         timeout: float = 30.0,
+        max_retries: int = 0,
     ) -> None:
         """
         Initialize OpenAI-compatible rerank client.
@@ -64,8 +65,9 @@ class OpenAIRerankClient(RerankBase):
             extra_headers: Optional extra headers for API requests
             timeout: HTTP request timeout in seconds. Defaults to 30. Increase for
                 local LLM servers that incur model cold-start latency on the first call.
+            max_retries: Extra attempts after a retryable failure; 0 disables retrying.
         """
-        super().__init__()
+        super().__init__(max_retries=max_retries)
         self.api_key = api_key
         self.api_base = api_base
         self.model_name = model_name
@@ -118,25 +120,8 @@ class OpenAIRerankClient(RerankBase):
             return None
         return response_json.get("results")
 
-    def rerank_batch(self, query: str, documents: List[str]) -> List[Optional[float]]:
-        """
-        Batch rerank documents against a query.
-
-        Args:
-            query: Query text
-            documents: List of document texts to rank
-
-        Returns:
-            One entry per input document, in input order: the rerank score, or
-            None where the service returned no score for that document.
-
-        Raises:
-            RerankError: The call failed; ``error_class`` says whether retrying
-                could help.
-        """
-        if not documents:
-            return []
-
+    def _rerank_once(self, query: str, documents: List[str]) -> List[Optional[float]]:
+        """One rerank call. Retrying is the base class's job."""
         req_body = self._build_request_body(query, documents)
 
         try:
@@ -217,4 +202,5 @@ class OpenAIRerankClient(RerankBase):
             model_name=config.model or "qwen3-rerank",
             extra_headers=config.extra_headers,
             timeout=config.timeout,
+            max_retries=config.max_retries,
         )

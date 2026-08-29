@@ -32,6 +32,22 @@ def _status_code_of(error: BaseException) -> Optional[int]:
     return status if isinstance(status, int) and not isinstance(status, bool) else None
 
 
+def _retry_after_of(error: BaseException) -> Optional[float]:
+    """Read the Retry-After hint a throttling response may carry.
+
+    Only the delta-seconds form is honoured; the HTTP-date form is rare in
+    practice and parsing it would need clock agreement with the service.
+    """
+    headers = getattr(getattr(error, "response", None), "headers", None)
+    if headers is None:
+        return None
+    try:
+        value = float(headers.get("Retry-After"))
+    except (TypeError, ValueError):
+        return None
+    return value if value >= 0 else None
+
+
 def _class_for_status(status_code: int) -> str:
     if status_code in (401, 403):
         return ERROR_CLASS_AUTH
@@ -52,11 +68,13 @@ class RerankError(Exception):
         provider: str,
         error_class: str = ERROR_CLASS_UNKNOWN,
         status_code: Optional[int] = None,
+        retry_after: Optional[float] = None,
     ) -> None:
         super().__init__(message)
         self.provider = provider
         self.error_class = error_class
         self.status_code = status_code
+        self.retry_after = retry_after
 
     def __str__(self) -> str:
         status = f" status={self.status_code}" if self.status_code is not None else ""
@@ -79,6 +97,7 @@ def rerank_error_from_exception(error: Exception, *, provider: str) -> RerankErr
         provider=provider,
         error_class=error_class,
         status_code=status_code,
+        retry_after=_retry_after_of(error),
     )
 
 

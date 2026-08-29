@@ -29,8 +29,9 @@ class CohereRerankClient(RerankBase):
         api_key: str,
         model: str = "rerank-v3.5",
         api_base: str = "https://api.cohere.com",
+        max_retries: int = 0,
     ):
-        super().__init__()
+        super().__init__(max_retries=max_retries)
         self.api_key = api_key
         self.model = model
         self.api_base = api_base.rstrip("/")
@@ -44,25 +45,8 @@ class CohereRerankClient(RerankBase):
             timeout=30.0,
         )
 
-    def rerank_batch(self, query: str, documents: List[str]) -> List[Optional[float]]:
-        """
-        Rerank documents against a query using Cohere Rerank API.
-
-        Args:
-            query: Query text
-            documents: List of document texts to rank
-
-        Returns:
-            One entry per input document, in input order: the relevance score
-            (0-1), or None where Cohere returned no score for that document.
-
-        Raises:
-            RerankError: The call failed; ``error_class`` says whether retrying
-                could help.
-        """
-        if not documents:
-            return []
-
+    def _rerank_once(self, query: str, documents: List[str]) -> List[Optional[float]]:
+        """One rerank call. Retrying is the base class's job."""
         try:
             started = time.monotonic()
             resp = self._client.post(
@@ -151,4 +135,5 @@ class CohereRerankClient(RerankBase):
         return cls(
             api_key=config.api_key,
             model=config.model_name if config.model_name != "doubao-seed-rerank" else "rerank-v3.5",
+            max_retries=config.max_retries,
         )

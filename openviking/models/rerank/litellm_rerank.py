@@ -32,7 +32,13 @@ class LiteLLMRerankClient(RerankBase):
     LiteLLM rerank API client.
     """
 
-    def __init__(self, api_key: Optional[str], api_base: Optional[str], model_name: str):
+    def __init__(
+        self,
+        api_key: Optional[str],
+        api_base: Optional[str],
+        model_name: str,
+        max_retries: int = 0,
+    ):
         """
         Initialize LiteLLM rerank client.
 
@@ -40,31 +46,16 @@ class LiteLLMRerankClient(RerankBase):
             api_key: API key for LiteLLM providers (optional, can come from env)
             api_base: API base for LiteLLM providers (optional, can come from env)
             model_name: Model name to use for reranking
+            max_retries: Extra attempts after a retryable failure; 0 disables retrying.
         """
-        super().__init__()
+        super().__init__(max_retries=max_retries)
         self.api_key = api_key
         self.api_base = api_base
         self.model_name = model_name
         self.provider = "litellm"
 
-    def rerank_batch(self, query: str, documents: List[str]) -> List[Optional[float]]:
-        """
-        Batch rerank documents against a query.
-
-        Args:
-            query: Query text
-            documents: List of document texts to rank
-
-        Returns:
-            One entry per input document, in input order: the rerank score.
-
-        Raises:
-            RerankError: The call failed; ``error_class`` says whether retrying
-                could help.
-        """
-        if not documents:
-            return []
-
+    def _rerank_once(self, query: str, documents: List[str]) -> List[Optional[float]]:
+        """One rerank call. Retrying is the base class's job."""
         try:
             import litellm
 
@@ -142,4 +133,5 @@ class LiteLLMRerankClient(RerankBase):
             api_key=config.api_key,
             api_base=config.api_base,
             model_name=config.model,
+            max_retries=config.max_retries,
         )
