@@ -60,8 +60,14 @@ from openviking.server.request_guard import run_guarded;\\
 from openviking.server.models import ERROR_CODE_TO_HTTP_STATUS as M;\\
 from openviking.server.config import ServerConfig;\\
 import openviking.server.routers.search, openviking.storage.queuefs.semantic_processor;\\
+from openviking.models.rerank.errors import RerankError;\\
+from openviking.models.rerank.executor import get_rerank_executor;\\
+from openviking.models.rerank.base import RerankBase;\\
+from openviking_cli.utils.config import RerankConfig;\\
 assert M['CANCELLED'] == 499, 'stale bytecode: models.py';\\
 assert hasattr(ServerConfig(), 'request_timeout_seconds'), 'stale bytecode: config.py';\\
+assert hasattr(RerankConfig(), 'max_retries'), 'stale bytecode: rerank_config.py';\\
+assert hasattr(RerankBase, '_rerank_once'), 'stale bytecode: rerank/base.py';\\
 print('overlay verified: new code is live')"
 LABEL org.opencontainers.image.base.name="$BASE_IMAGE" \\
       org.opencontainers.image.revision="\$SOURCE_COMMIT"
