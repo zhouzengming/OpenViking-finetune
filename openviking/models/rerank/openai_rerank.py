@@ -13,6 +13,8 @@ from typing import Dict, List, Optional
 import requests
 
 from openviking.models.rerank.base import RerankBase
+from openviking.models.rerank.errors import RerankError, rerank_error_from_exception
+from openviking.utils.model_retry import ERROR_CLASS_PERMANENT
 from openviking_cli.utils import get_logger
 
 logger = get_logger(__name__)
@@ -116,7 +118,7 @@ class OpenAIRerankClient(RerankBase):
             return None
         return response_json.get("results")
 
-    def rerank_batch(self, query: str, documents: List[str]) -> Optional[List[Optional[float]]]:
+    def rerank_batch(self, query: str, documents: List[str]) -> List[Optional[float]]:
         """
         Batch rerank documents against a query.
 
@@ -126,9 +128,11 @@ class OpenAIRerankClient(RerankBase):
 
         Returns:
             One entry per input document, in input order: the rerank score, or
-            None where the service returned no score for that document. None
-            instead of a list when the whole call fails and the caller should
-            fall back.
+            None where the service returned no score for that document.
+
+        Raises:
+            RerankError: The call failed; ``error_class`` says whether retrying
+                could help.
         """
         if not documents:
             return []
@@ -157,8 +161,11 @@ class OpenAIRerankClient(RerankBase):
 
             results = self._extract_results(result)
             if not results:
-                logger.warning(f"[OpenAIRerankClient] Unexpected response format: {result}")
-                return None
+                raise RerankError(
+                    f"Unexpected response format: {result}",
+                    provider=self.provider,
+                    error_class=ERROR_CLASS_PERMANENT,
+                )
 
             if len(results) != len(documents):
                 logger.warning(
@@ -176,18 +183,20 @@ class OpenAIRerankClient(RerankBase):
             for item in results:
                 idx = item.get("index")
                 if idx is None or not (0 <= idx < len(documents)):
-                    logger.warning(
-                        "[OpenAIRerankClient] Out-of-bounds or missing index in result: %s", item
+                    raise RerankError(
+                        f"Out-of-bounds or missing index in result: {item}",
+                        provider=self.provider,
+                        error_class=ERROR_CLASS_PERMANENT,
                     )
-                    return None
                 scores[idx] = item.get("relevance_score", item.get("relevance_scores", 0.0))
 
             logger.debug(f"[OpenAIRerankClient] Reranked {len(documents)} documents")
             return scores
 
+        except RerankError:
+            raise
         except Exception as e:
-            logger.error(f"[OpenAIRerankClient] Rerank failed: {e}")
-            return None
+            raise rerank_error_from_exception(e, provider=self.provider) from e
 
     @classmethod
     def from_config(cls, config) -> Optional["OpenAIRerankClient"]:

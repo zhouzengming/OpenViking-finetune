@@ -121,7 +121,7 @@ def test_extra_headers_can_override_defaults(mock_post):
     """Test that extra_headers can override default headers if needed."""
     mock_response = Mock()
     mock_response.status_code = 200
-    mock_response.json.return_value = {"results": []}
+    mock_response.json.return_value = {"results": [{"index": 0, "relevance_score": 0.5}]}
     mock_post.return_value = mock_response
 
     client = OpenAIRerankClient(

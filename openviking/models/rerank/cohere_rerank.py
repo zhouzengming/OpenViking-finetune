@@ -14,6 +14,8 @@ from typing import List, Optional
 import httpx
 
 from openviking.models.rerank.base import RerankBase
+from openviking.models.rerank.errors import RerankError, rerank_error_from_exception
+from openviking.utils.model_retry import ERROR_CLASS_PERMANENT
 from openviking_cli.utils import get_logger
 
 logger = get_logger(__name__)
@@ -42,7 +44,7 @@ class CohereRerankClient(RerankBase):
             timeout=30.0,
         )
 
-    def rerank_batch(self, query: str, documents: List[str]) -> Optional[List[Optional[float]]]:
+    def rerank_batch(self, query: str, documents: List[str]) -> List[Optional[float]]:
         """
         Rerank documents against a query using Cohere Rerank API.
 
@@ -53,8 +55,10 @@ class CohereRerankClient(RerankBase):
         Returns:
             One entry per input document, in input order: the relevance score
             (0-1), or None where Cohere returned no score for that document.
-            None instead of a list on failure (caller should fall back to
-            vector scores).
+
+        Raises:
+            RerankError: The call failed; ``error_class`` says whether retrying
+                could help.
         """
         if not documents:
             return []
@@ -101,25 +105,32 @@ class CohereRerankClient(RerankBase):
                 # score document 1; a negative index would silently score a
                 # document counted from the end.
                 if not isinstance(idx, int) or isinstance(idx, bool):
-                    logger.warning("[CohereRerank] Non-integer index in result: %s", result)
-                    return None
+                    raise RerankError(
+                        f"Non-integer index in result: {result}",
+                        provider=self.provider,
+                        error_class=ERROR_CLASS_PERMANENT,
+                    )
                 if not (0 <= idx < len(documents)):
-                    logger.warning("[CohereRerank] Out-of-bounds index in result: %s", result)
-                    return None
+                    raise RerankError(
+                        f"Out-of-bounds index in result: {result}",
+                        provider=self.provider,
+                        error_class=ERROR_CLASS_PERMANENT,
+                    )
                 if "relevance_score" not in result:
-                    logger.warning("[CohereRerank] Missing relevance_score in result: %s", result)
-                    return None
+                    raise RerankError(
+                        f"Missing relevance_score in result: {result}",
+                        provider=self.provider,
+                        error_class=ERROR_CLASS_PERMANENT,
+                    )
                 scores[idx] = result["relevance_score"]
 
             logger.debug(f"[CohereRerank] Reranked {len(documents)} documents")
             return scores
 
-        except httpx.HTTPStatusError as e:
-            logger.error(f"[CohereRerank] API error: {e.response.status_code} {e.response.text}")
-            return None
+        except RerankError:
+            raise
         except Exception as e:
-            logger.error(f"[CohereRerank] Rerank failed: {e}")
-            return None
+            raise rerank_error_from_exception(e, provider=self.provider) from e
 
     def close(self):
         self._client.close()

@@ -9,6 +9,8 @@ import time
 from typing import Any, List, Optional
 
 from openviking.models.rerank.base import RerankBase
+from openviking.models.rerank.errors import RerankError, rerank_error_from_exception
+from openviking.utils.model_retry import ERROR_CLASS_PERMANENT
 from openviking_cli.utils import get_logger
 
 logger = get_logger(__name__)
@@ -45,7 +47,7 @@ class LiteLLMRerankClient(RerankBase):
         self.model_name = model_name
         self.provider = "litellm"
 
-    def rerank_batch(self, query: str, documents: List[str]) -> Optional[List[float]]:
+    def rerank_batch(self, query: str, documents: List[str]) -> List[Optional[float]]:
         """
         Batch rerank documents against a query.
 
@@ -54,8 +56,11 @@ class LiteLLMRerankClient(RerankBase):
             documents: List of document texts to rank
 
         Returns:
-            List of rerank scores for each document (same order as input),
-            or None when rerank fails and the caller should fall back
+            One entry per input document, in input order: the rerank score.
+
+        Raises:
+            RerankError: The call failed; ``error_class`` says whether retrying
+                could help.
         """
         if not documents:
             return []
@@ -85,24 +90,28 @@ class LiteLLMRerankClient(RerankBase):
 
             results = response.results
             if not results:
-                logger.warning(f"[LiteLLMRerankClient] Unexpected response format: {response}")
-                return None
+                raise RerankError(
+                    f"Unexpected response format: {response}",
+                    provider=self.provider,
+                    error_class=ERROR_CLASS_PERMANENT,
+                )
 
             if len(results) != len(documents):
-                logger.warning(
-                    "[LiteLLMRerankClient] Unexpected rerank result length: expected=%s actual=%s",
-                    len(documents),
-                    len(results),
+                raise RerankError(
+                    f"Unexpected rerank result length: expected={len(documents)} "
+                    f"actual={len(results)}",
+                    provider=self.provider,
+                    error_class=ERROR_CLASS_PERMANENT,
                 )
-                return None
 
             for item in results:
                 idx = _result_field(item, "index")
                 if idx is None or not (0 <= idx < len(documents)):
-                    logger.warning(
-                        "[LiteLLMRerankClient] Out-of-bounds or missing index in result: %s", item
+                    raise RerankError(
+                        f"Out-of-bounds or missing index in result: {item}",
+                        provider=self.provider,
+                        error_class=ERROR_CLASS_PERMANENT,
                     )
-                    return None
 
             # Results may not be in original order — sort by index
             sorted_results = sorted(results, key=lambda x: _result_field(x, "index"))
@@ -111,9 +120,10 @@ class LiteLLMRerankClient(RerankBase):
             logger.debug(f"[LiteLLMRerankClient] Reranked {len(documents)} documents")
             return scores
 
+        except RerankError:
+            raise
         except Exception as e:
-            logger.error(f"[LiteLLMRerankClient] Rerank failed: {e}")
-            return None
+            raise rerank_error_from_exception(e, provider=self.provider) from e
 
     @classmethod
     def from_config(cls, config) -> Optional["LiteLLMRerankClient"]:

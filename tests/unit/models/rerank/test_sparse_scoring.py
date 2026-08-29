@@ -15,6 +15,7 @@ import httpx
 import pytest
 
 from openviking.models.rerank.cohere_rerank import CohereRerankClient
+from openviking.models.rerank.errors import RerankError
 from openviking.models.rerank.openai_rerank import OpenAIRerankClient
 
 
@@ -85,7 +86,7 @@ class TestEveryDocumentIsAskedFor:
 
     def test_openai_flat_request_asks_for_every_document(self):
         client = _openai_client()
-        response = _openai_response({"results": []})
+        response = _openai_response({"results": [{"index": 0, "relevance_score": 0.5}]})
 
         with patch(
             "openviking.models.rerank.openai_rerank.requests.post", return_value=response
@@ -96,7 +97,7 @@ class TestEveryDocumentIsAskedFor:
 
     def test_openai_nested_request_asks_for_every_document(self):
         client = _openai_client("https://dashscope.aliyuncs.com/api/v1/services/rerank/text-rerank")
-        response = _openai_response({"output": {"results": []}})
+        response = _openai_response({"output": {"results": [{"index": 0, "relevance_score": 0.5}]}})
 
         with patch(
             "openviking.models.rerank.openai_rerank.requests.post", return_value=response
@@ -118,9 +119,8 @@ class TestCohereRejectsMalformedItems:
         client = _cohere_client()
         _cohere_response(client, {"results": [{"index": -1, "relevance_score": 0.9}]})
 
-        scores = client.rerank_batch("q", ["first", "second", "third"])
-
-        assert scores is None
+        with pytest.raises(RerankError):
+            client.rerank_batch("q", ["first", "second", "third"])
 
     @pytest.mark.parametrize(
         "item",
@@ -133,14 +133,16 @@ class TestCohereRejectsMalformedItems:
         ],
         ids=["missing-index", "out-of-range", "string-index", "bool-index", "missing-score"],
     )
-    def test_malformed_item_is_rejected_without_raising(self, item):
+    def test_malformed_item_is_rejected(self, item):
         client = _cohere_client()
         _cohere_response(client, {"results": [item]})
 
-        assert client.rerank_batch("q", ["first", "second"]) is None
+        with pytest.raises(RerankError):
+            client.rerank_batch("q", ["first", "second"])
 
-    def test_a_transport_error_still_falls_back(self):
+    def test_a_transport_error_is_reported(self):
         client = _cohere_client()
         client._client.post.side_effect = httpx.ConnectError("boom")
 
-        assert client.rerank_batch("q", ["first"]) is None
+        with pytest.raises(RerankError):
+            client.rerank_batch("q", ["first"])

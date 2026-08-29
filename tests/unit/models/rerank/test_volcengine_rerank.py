@@ -4,6 +4,9 @@
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+
+from openviking.models.rerank.errors import RerankError
 from openviking.models.rerank.volcengine_rerank import RerankClient
 
 
@@ -48,21 +51,23 @@ class TestVikingDBRerankScoreMapping:
         assert scores == [0.9, 0.8, 0.7]
 
     @patch("openviking.models.rerank.volcengine_rerank.requests.request")
-    def test_out_of_range_id_returns_none(self, mock_request):
-        # An unusable id must fall back to vector scores rather than write to a
-        # wrong slot or raise.
+    def test_out_of_range_id_is_reported(self, mock_request):
+        # An unusable id must be reported so the caller falls back to vector
+        # scores, rather than writing to a wrong slot.
         mock_request.return_value = _make_response(
             [{"id": 0, "score": 0.9}, {"id": 7, "score": 0.8}, {"id": 2, "score": 0.7}]
         )
 
-        assert _client().rerank_batch("q", ["first", "second", "third"]) is None
+        with pytest.raises(RerankError):
+            _client().rerank_batch("q", ["first", "second", "third"])
 
     @patch("openviking.models.rerank.volcengine_rerank.requests.request")
-    def test_duplicate_id_returns_none(self, mock_request):
+    def test_duplicate_id_is_reported(self, mock_request):
         # Two items claiming the same slot leave one document unscored; a silent
         # 0.0 there would be pruned by the relevance threshold.
         mock_request.return_value = _make_response(
             [{"id": 0, "score": 0.9}, {"id": 0, "score": 0.8}, {"id": 2, "score": 0.7}]
         )
 
-        assert _client().rerank_batch("q", ["first", "second", "third"]) is None
+        with pytest.raises(RerankError):
+            _client().rerank_batch("q", ["first", "second", "third"])
