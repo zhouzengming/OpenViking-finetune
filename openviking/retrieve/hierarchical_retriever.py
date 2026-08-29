@@ -19,6 +19,7 @@ from openviking.core.context import ContextLevel
 from openviking.core.retrieval_targets import default_target_directories
 from openviking.models.embedder.base import EmbedResult, embed_compat
 from openviking.models.rerank import RerankClient
+from openviking.models.rerank.errors import RerankError
 from openviking.retrieve.memory_lifecycle import hotness_score
 from openviking.retrieve.retrieval_stats import get_stats_collector
 from openviking.server.identity import RequestContext
@@ -26,13 +27,22 @@ from openviking.storage.abstract_overview import body_for_preview, body_for_prev
 from openviking.storage.expr import FilterExpr
 from openviking.storage.vikingdb_manager import VikingDBManager, VikingDBManagerProxy
 from openviking.telemetry import get_current_telemetry
+from openviking.utils.model_retry import (
+    ERROR_CLASS_PERMANENT,
+    ERROR_CLASS_QUOTA_EXCEEDED,
+    classify_api_error,
+)
 from openviking.utils.tags import normalize_search_tags
 from openviking.utils.time_utils import parse_iso_datetime
 from openviking.utils.token_estimation import (
     estimate_text_tokens,
     truncate_text_to_token_budget,
 )
-from openviking_cli.exceptions import InvalidArgumentError
+from openviking_cli.exceptions import (
+    InvalidArgumentError,
+    ResourceExhaustedError,
+    UnavailableError,
+)
 from openviking_cli.retrieve.types import (
     ContextType,
     MatchedContext,
@@ -78,6 +88,7 @@ class HierarchicalRetriever:
         self.embedder = embedder
         self.rerank_config = rerank_config
         self.rerank_max_input_tokens = rerank_config.max_input_tokens if rerank_config else 0
+        self.rerank_on_failure = rerank_config.on_failure if rerank_config else "fallback"
         self.retrieval_config = retrieval_config or RetrievalConfig()
         self.hotness_alpha = self.retrieval_config.hotness_alpha
         self.score_propagation_alpha = self.retrieval_config.score_propagation_alpha
@@ -343,6 +354,44 @@ class HierarchicalRetriever:
             return score >= threshold
         return score > threshold
 
+    def _handle_rerank_failure(self, error: Exception, fallback_scores: List[float]) -> List[float]:
+        """Record a failed rerank, then degrade — or refuse, if configured to.
+
+        Degrading returns a plausible 200 built on vector scores alone, which
+        is why the counters exist: they are the only outward sign that ranking
+        quality dropped.
+        """
+        if isinstance(error, RerankError):
+            error_class = error.error_class
+            status_code = error.status_code
+        else:
+            error_class = classify_api_error(error)
+            status_code = None
+
+        telemetry = get_current_telemetry()
+        telemetry.count("rerank.fallbacks", 1)
+        telemetry.count(f"rerank.failures.{error_class}", 1)
+        if status_code == 429 or error_class == ERROR_CLASS_QUOTA_EXCEEDED:
+            # Throttling and a flaky upstream both classify as transient but
+            # call for different operational responses.
+            telemetry.count("rerank.rate_limited", 1)
+
+        if self.rerank_on_failure == "error":
+            logger.error("[HierarchicalRetriever] Rerank failed (%s): %s", error_class, error)
+            if status_code == 429 or error_class == ERROR_CLASS_QUOTA_EXCEEDED:
+                raise ResourceExhaustedError(
+                    f"Rerank provider is rate limiting: {error}",
+                    details={"error_class": error_class},
+                ) from error
+            raise UnavailableError("rerank", reason=str(error)) from error
+
+        logger.warning(
+            "[HierarchicalRetriever] Rerank failed (%s), fallback to vector scores: %s",
+            error_class,
+            error,
+        )
+        return fallback_scores
+
     async def _rerank_scores(
         self,
         query: str,
@@ -377,16 +426,18 @@ class HierarchicalRetriever:
                 [document for _, document in rerank_documents],
             )
         except Exception as e:
-            logger.warning(
-                "[HierarchicalRetriever] Rerank failed, fallback to vector scores: %s", e
-            )
-            return fallback_scores
+            return self._handle_rerank_failure(e, fallback_scores)
 
         if not scores or len(scores) != len(rerank_documents):
-            logger.warning(
-                "[HierarchicalRetriever] Invalid rerank result, fallback to vector scores"
+            return self._handle_rerank_failure(
+                RerankError(
+                    f"Invalid rerank result length: expected={len(rerank_documents)} "
+                    f"actual={len(scores) if scores else 0}",
+                    provider=getattr(self._rerank_client, "provider", "rerank"),
+                    error_class=ERROR_CLASS_PERMANENT,
+                ),
+                fallback_scores,
             )
-            return fallback_scores
 
         normalized_scores = list(fallback_scores)
         unscored = 0
