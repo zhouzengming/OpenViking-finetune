@@ -14,7 +14,6 @@ available for deployments that would rather fail than quietly rank worse.
 import pytest
 
 from openviking.models.rerank.errors import RerankError
-from openviking.retrieve.hierarchical_retriever import HierarchicalRetriever
 from openviking.telemetry.context import bind_telemetry
 from openviking.telemetry.operation import OperationTelemetry
 from openviking.utils.model_retry import (
@@ -36,26 +35,20 @@ class _Client:
         return self._outcome
 
 
-def _retriever(outcome, on_failure="fallback"):
-    retriever = HierarchicalRetriever.__new__(HierarchicalRetriever)
-    retriever._rerank_client = _Client(outcome)
-    retriever.rerank_max_input_tokens = 0
-    retriever.rerank_on_failure = on_failure
-    return retriever
-
-
-async def _run(outcome, on_failure="fallback"):
+async def _run(make_rerank_retriever, outcome, on_failure="fallback"):
+    retriever = make_rerank_retriever(_Client(outcome), on_failure=on_failure)
     telemetry = OperationTelemetry("search.find", enabled=True)
     with bind_telemetry(telemetry):
-        scores = await _retriever(outcome, on_failure)._rerank_scores("q", ["a", "b"], [0.31, 0.42])
+        scores = await retriever._rerank_scores("q", ["a", "b"], [0.31, 0.42])
     return scores, telemetry.finish().summary["rerank"]
 
 
 class TestFailuresAreCounted:
     @pytest.mark.asyncio
-    async def test_a_fallback_is_counted_and_classified(self):
+    async def test_a_fallback_is_counted_and_classified(self, make_rerank_retriever):
         scores, rerank = await _run(
-            RerankError("boom", provider="openai", error_class=ERROR_CLASS_TRANSIENT)
+            make_rerank_retriever,
+            RerankError("boom", provider="openai", error_class=ERROR_CLASS_TRANSIENT),
         )
 
         assert scores == [0.31, 0.42]
@@ -63,41 +56,46 @@ class TestFailuresAreCounted:
         assert rerank["failures"] == {ERROR_CLASS_TRANSIENT: 1}
 
     @pytest.mark.asyncio
-    async def test_rate_limiting_is_broken_out_from_other_transient_failures(self):
+    async def test_rate_limiting_is_broken_out_from_other_transient_failures(
+        self, make_rerank_retriever
+    ):
         # Both classify as transient, but throttling and a flaky upstream call
         # for different operational responses.
         _, throttled = await _run(
+            make_rerank_retriever,
             RerankError(
                 "429", provider="openai", error_class=ERROR_CLASS_TRANSIENT, status_code=429
-            )
+            ),
         )
         _, flaky = await _run(
+            make_rerank_retriever,
             RerankError(
                 "503", provider="openai", error_class=ERROR_CLASS_TRANSIENT, status_code=503
-            )
+            ),
         )
 
         assert throttled["rate_limited"] == 1
         assert flaky["rate_limited"] == 0
 
     @pytest.mark.asyncio
-    async def test_a_credential_failure_is_classified_as_auth(self):
+    async def test_a_credential_failure_is_classified_as_auth(self, make_rerank_retriever):
         _, rerank = await _run(
-            RerankError("401", provider="openai", error_class=ERROR_CLASS_AUTH, status_code=401)
+            make_rerank_retriever,
+            RerankError("401", provider="openai", error_class=ERROR_CLASS_AUTH, status_code=401),
         )
 
         assert rerank["failures"] == {ERROR_CLASS_AUTH: 1}
 
     @pytest.mark.asyncio
-    async def test_an_untyped_failure_is_still_counted(self):
-        _, rerank = await _run(RuntimeError("nobody anticipated this"))
+    async def test_an_untyped_failure_is_still_counted(self, make_rerank_retriever):
+        _, rerank = await _run(make_rerank_retriever, RuntimeError("nobody anticipated this"))
 
         assert rerank["fallbacks"] == 1
         assert sum(rerank["failures"].values()) == 1
 
     @pytest.mark.asyncio
-    async def test_a_successful_rerank_counts_no_fallback(self):
-        _, rerank = await _run([0.9, 0.8])
+    async def test_a_successful_rerank_counts_no_fallback(self, make_rerank_retriever):
+        _, rerank = await _run(make_rerank_retriever, [0.9, 0.8])
 
         assert rerank["fallbacks"] == 0
         assert rerank["failures"] == {}
@@ -109,9 +107,10 @@ class TestStrictMode:
         assert RerankConfig().on_failure == "fallback"
 
     @pytest.mark.asyncio
-    async def test_throttling_surfaces_as_resource_exhausted(self):
+    async def test_throttling_surfaces_as_resource_exhausted(self, make_rerank_retriever):
         with pytest.raises(ResourceExhaustedError):
             await _run(
+                make_rerank_retriever,
                 RerankError(
                     "429", provider="openai", error_class=ERROR_CLASS_TRANSIENT, status_code=429
                 ),
@@ -119,30 +118,34 @@ class TestStrictMode:
             )
 
     @pytest.mark.asyncio
-    async def test_other_failures_surface_as_unavailable(self):
+    async def test_other_failures_surface_as_unavailable(self, make_rerank_retriever):
         with pytest.raises(UnavailableError):
             await _run(
+                make_rerank_retriever,
                 RerankError("bad key", provider="openai", error_class=ERROR_CLASS_AUTH),
                 on_failure="error",
             )
 
     @pytest.mark.asyncio
-    async def test_a_malformed_result_also_refuses_in_strict_mode(self):
+    async def test_a_malformed_result_also_refuses_in_strict_mode(self, make_rerank_retriever):
         with pytest.raises(UnavailableError):
             await _run(
+                make_rerank_retriever,
                 RerankError("garbage", provider="openai", error_class=ERROR_CLASS_PERMANENT),
                 on_failure="error",
             )
 
     @pytest.mark.asyncio
-    async def test_strict_mode_returns_normally_when_rerank_works(self):
-        scores, _ = await _run([0.9, 0.8], on_failure="error")
+    async def test_strict_mode_returns_normally_when_rerank_works(self, make_rerank_retriever):
+        scores, _ = await _run(make_rerank_retriever, [0.9, 0.8], on_failure="error")
 
         assert scores == [0.9, 0.8]
 
     @pytest.mark.asyncio
-    async def test_unscored_documents_are_not_a_failure_even_in_strict_mode(self):
+    async def test_unscored_documents_are_not_a_failure_even_in_strict_mode(
+        self, make_rerank_retriever
+    ):
         # A partial ranking is still a ranking; only a failed call is a failure.
-        scores, _ = await _run([0.9, None], on_failure="error")
+        scores, _ = await _run(make_rerank_retriever, [0.9, None], on_failure="error")
 
         assert scores == [0.9, 0.42]

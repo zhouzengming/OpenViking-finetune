@@ -144,6 +144,7 @@ Changing the model or `dimension` can make existing vector collections incompati
 | `model` | string / `null` | `null` | OpenAI-compatible or LiteLLM rerank model |
 | `threshold` | number | `0.1` | Minimum score considered relevant |
 | `max_input_tokens` | integer; `0` or `>= 128` | `0` | Maximum estimated tokens per query-document pair; `0` disables truncation |
+| `max_concurrency` | integer; `0`–`256` | `0` | Size of the dedicated rerank thread pool; `0` keeps the size of the shared default executor it replaces (`min(32, CPU+4)`). Takes effect at startup |
 | `on_failure` | `fallback` / `error` | `fallback` | What a failed rerank call does. `fallback` degrades to vector scores and still answers; `error` refuses the request (429 when throttled, 503 otherwise), for deployments that would rather fail than silently rank worse |
 | `max_retries` | integer; `0`–`10` | `0` | Extra attempts after a rate-limited or transient failure, with exponential backoff honouring `Retry-After`. `0` gives up immediately and falls back to vector scores; raising it trades latency inside a live search for ranking quality. Failures that would repeat — bad credentials, invalid requests — are never retried |
 
