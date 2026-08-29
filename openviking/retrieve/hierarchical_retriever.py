@@ -22,7 +22,7 @@ from openviking.models.rerank import RerankClient
 from openviking.retrieve.memory_lifecycle import hotness_score
 from openviking.retrieve.retrieval_stats import get_stats_collector
 from openviking.server.identity import RequestContext
-from openviking.storage.abstract_overview import body_for_preview
+from openviking.storage.abstract_overview import body_for_preview, body_for_preview_lenient
 from openviking.storage.expr import FilterExpr
 from openviking.storage.vikingdb_manager import VikingDBManager, VikingDBManagerProxy
 from openviking.telemetry import get_current_telemetry
@@ -610,7 +610,12 @@ class HierarchicalRetriever:
                 # the public find/search preview contract body-only at its final
                 # conversion boundary. L2 user Markdown is intentionally left
                 # untouched, including ordinary YAML frontmatter.
-                abstract = body_for_preview(abstract)
+                #
+                # Lenient because the two shapes are only told apart by a
+                # leading `---`, which a body-only abstract may legitimately
+                # start with. Reducing such a record strictly raises and takes
+                # the entire query down over one row.
+                abstract = body_for_preview_lenient(abstract)
 
             results.append(
                 MatchedContext(
@@ -622,9 +627,7 @@ class HierarchicalRetriever:
                     abstract=abstract,
                     category=c.get("category", ""),
                     score=final_score,
-                    search_tags=normalize_search_tags(
-                        c.get("search_tags"), discard_invalid=True
-                    ),
+                    search_tags=normalize_search_tags(c.get("search_tags"), discard_invalid=True),
                 )
             )
 
