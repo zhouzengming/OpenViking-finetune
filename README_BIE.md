@@ -33,6 +33,47 @@ OPENVIKING_VERSION=$(git describe --tags --match 'v[0-9]*' | sed 's/^v//; s/-\([
 
 `OPENVIKING_VERSION` 是**必填**的，compose 用 `:?` 强制。原因见文末「版本号」。
 
+### 各机器的状态目录
+
+`OPENVIKING_STATE_DIR` 决定 `ov.conf` 与 `data/` 落在宿主机哪里，不设就是
+`~/.openviking-container`。**`.25` 服务器上必须显式指定**，否则会落到 home 分区：
+
+| 机器 | 命令前缀 |
+|---|---|
+| 本机（开发） | 不用加，走默认 `~/.openviking-container` |
+| **`.25` 服务器** | **`OPENVIKING_STATE_DIR=/data1/openviking`** |
+
+`.25` 上的完整命令：
+
+```bash
+OPENVIKING_STATE_DIR=/data1/openviking \
+OPENVIKING_VERSION=$(git describe --tags --match 'v[0-9]*' | sed 's/^v//; s/-\([0-9]*\)-g/+\1.g/') \
+  docker compose -f docker-compose.build.yml up -d --build
+```
+
+展开成两个 bind 挂载：
+
+```
+/data1/openviking/.openviking  →  /app/.openviking     # ov.conf / ovcli.conf
+/data1/openviking/data         →  /app/data
+```
+
+写法要求（`docker compose config` 实测）：
+
+| 写法 | 结果 |
+|---|---|
+| `/data1/openviking`（绝对） | ✅ |
+| `~/ov-state` | ✅ `~` 会被展开成 `$HOME` |
+| `ov-state`（相对） | ❌ `refers to undefined volume ...: invalid compose project` |
+
+相对路径会被 compose 当成**命名卷**去查，查不到直接失败——好在是 fail-fast，
+不会静默建出一个你不想要的卷。
+
+⚠️ **`.25` 目前跑的不是源码镜像**，是官方镜像 + 两个 entrypoint 补丁。要切到
+源码构建，除了上面的前缀，还必须先摘掉 compose 里的补丁包装，否则
+`apply_*_patch.py` 会因锚点消失而 `exit 1` 拒绝启动（见文末「排障」最后一条）。
+另外别与既有实例共用同一份数据目录。
+
 ### 受限网络：先把 syntax 前端镜像备到本地
 
 四个基础镜像、apt、cargo、PyPI 源在 `docker-compose.build.yml` 里**已经默认走镜像站**，
@@ -153,7 +194,7 @@ curl -s http://127.0.0.1:1933/health
 | `OPENVIKING_IMAGE_TAG` | `source` | 镜像 tag（`openviking:<tag>`） |
 | `OPENVIKING_CONTAINER_NAME` | `openviking` | 容器名 |
 | `OPENVIKING_SERVER_PORT` | `1933` | 宿主机端口 |
-| `OPENVIKING_STATE_DIR` | `~/.openviking-container` | 状态目录 |
+| `OPENVIKING_STATE_DIR` | `~/.openviking-container` | 状态目录；须绝对路径或 `~/` 开头。`.25` 上用 `/data1/openviking` |
 | `UV_LOCK_STRATEGY` | `locked` | `locked` 锁文件对不上即失败；`auto` 自动重锁 |
 | `OV_DOCKERHUB` | `docker.m.daocloud.io` | 置 `docker.io` 回官方源 |
 | `OV_GHCR` | `ghcr.m.daocloud.io` | uv 构建镜像源 |
