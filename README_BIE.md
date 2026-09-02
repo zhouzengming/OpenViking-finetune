@@ -69,11 +69,6 @@ OPENVIKING_VERSION=$(git describe --tags --match 'v[0-9]*' | sed 's/^v//; s/-\([
 相对路径会被 compose 当成**命名卷**去查，查不到直接失败——好在是 fail-fast，
 不会静默建出一个你不想要的卷。
 
-⚠️ **`.25` 目前跑的不是源码镜像**，是官方镜像 + 两个 entrypoint 补丁。要切到
-源码构建，除了上面的前缀，还必须先摘掉 compose 里的补丁包装，否则
-`apply_*_patch.py` 会因锚点消失而 `exit 1` 拒绝启动（见文末「排障」最后一条）。
-另外别与既有实例共用同一份数据目录。
-
 ### 受限网络：先把 syntax 前端镜像备到本地
 
 四个基础镜像、apt、cargo、PyPI 源在 `docker-compose.build.yml` 里**已经默认走镜像站**，
