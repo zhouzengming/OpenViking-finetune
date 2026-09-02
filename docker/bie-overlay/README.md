@@ -103,8 +103,26 @@ sha256 均不变，因为镜像站提供的是逐字节相同的产物（已实�
 
 ### apt 源
 
-Debian apt 源默认走 `http://mirrors.ustc.edu.cn`（构建容器直连 `deb.debian.org`
+Debian apt 源默认走 `http://repo.huaweicloud.com`（构建容器直连 `deb.debian.org`
 在国内很慢，而构建期代理默认为空）。用镜像自带源：`OV_APT_MIRROR=`（置空）。
+
+选型实测（本机、`--noproxy '*'`、走 http、2 个 deb 取平均）：
+
+| 镜像 | MB/s | http 直连 200？ |
+|---|---|---|
+| **华为云** | **10.7** | ✅ 零重定向 |
+| NJU 南大 | 5.8 | ✅ |
+| 腾讯云 | 3.5 | ❌ **302 跳 https** |
+| 阿里云 | 0.88 | ✅ |
+| USTC | 0.68 | ✅ |
+
+华为云约为原 USTC 的 15 倍。**腾讯云虽快但被排除**：它在 http 下 302 跳 https，
+而运行时阶段的 `ca-certificates` 正是靠这条 apt 装的，跳到 https 会因缺 CA 失败。
+选源时"http 下能不能直接 200"和速度是同等硬的条件。
+
+`python:3.13-slim-trixie` 实际列的是三个 suite——`/debian` 下的 `trixie`、
+`trixie-updates`，与 `/debian-security` 下的 `trixie-security`；三个的 `InRelease`
+在华为云都已验证 http 直接 200、`num_redirects=0`、返回真 PGP 签名文件。
 
 几个实现要点：
 
