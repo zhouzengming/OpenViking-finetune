@@ -65,7 +65,21 @@ crates.io 默认走 USTC：`sparse+https://mirrors.ustc.edu.cn/crates.io-index/`
 
 ### PyPI 源
 
-默认走 USTC（`PYPI_INDEX` / `PYPI_FILES`），供**完全访问不到 pypi.org 的机器**构建。
+默认走**阿里云**（`PYPI_INDEX` / `PYPI_FILES`），供**完全访问不到 pypi.org 的机器**构建。
+
+选型是实测的（本机、全程 `--noproxy '*'`、3 个不同大小的 wheel 取平均下载速度）：
+
+| 镜像 | 平均 MB/s |
+|---|---|
+| **阿里云** | **1.83** |
+| 华为云 | 1.73 |
+| NJU 南大 | 1.10 |
+| BFSU 北外 | 1.08 |
+| USTC | 0.36 |
+
+USTC 慢约 5 倍。它另有一处小损耗：`/pypi/web/packages/...` 会 301 跳到
+`/pypi/packages/...`（仍在站内），每个产物多一次往返 ×581 个包——但实测把路径改成
+直连形式也只有 0.38 MB/s，说明主因是带宽而非重定向。阿里云直接 200 无跳转。
 回官方源：`OV_PYPI_INDEX= OV_PYPI_FILES=`（两者一起置空）。
 
 做法是**在构建期改写 `uv.lock`**，仓库里那份保持与上游逐字节一致——避免 4217 处
