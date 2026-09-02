@@ -25,7 +25,9 @@ def test_dockerfile_and_makefile_share_the_same_minimum_rust_version():
     makefile = _read_text("Makefile")
 
     docker_rust_version = _extract_rust_version(
-        r"^FROM rust:(?P<version>[0-9.]+)-trixie AS rust-toolchain$",
+        # 基础镜像已参数化成 ARG（便于换镜像站），版本号仍钉在 ARG 默认值里，
+        # 这条不变式因此改为从 ARG 读取——守的东西没变。
+        r"^ARG RUST_IMAGE=rust:(?P<version>[0-9.]+)-trixie$",
         dockerfile,
     )
     make_rust_version = _extract_rust_version(

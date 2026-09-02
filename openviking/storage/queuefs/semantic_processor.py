@@ -38,6 +38,7 @@ from openviking.storage.abstract_overview import (
     AbstractOverviewFormatError,
     AbstractOverviewWriteResult,
     body_for_preview,
+    body_for_preview_lenient,
     deterministic_sample,
     freshness_metadata,
     plan_abstract_overview_refresh,

@@ -21,6 +21,10 @@ QUEUE_PKG = "openviking.storage.queuefs"
 class TestParentRefreshBoundary:
     """Parent refresh must stop at the user namespace root."""
 
+    # 上游 v0.4.17 把上溯逻辑重构成 plan_abstract_overview_refresh，旧的
+    # mark_semantic_sidecars_pending 已不存在。停止判定发生在调用它**之前**，
+    # 所以"有没有越过边界"等价于"这个函数有没有被调到"。
+
     async def test_stops_at_user_namespace_root(self):
         # viking://user is the container holding every account, and a per-user
         # identity cannot write its .overview.md. Walking up to it produces a
@@ -28,26 +32,33 @@ class TestParentRefreshBoundary:
         msg = SemanticMsg(uri="viking://user/zzm", context_type="resource")
 
         with (
-            patch(f"{MODULE}.mark_semantic_sidecars_pending", new=AsyncMock()) as mark_pending,
+            patch(f"{MODULE}.plan_abstract_overview_refresh", new=AsyncMock()) as plan,
             patch(f"{MODULE}.get_viking_fs", new=MagicMock()),
             patch(f"{QUEUE_PKG}.get_queue_manager", new=MagicMock(return_value=None)),
         ):
-            await SemanticProcessor()._enqueue_parent_refresh(msg, "viking://user/zzm")
+            await SemanticProcessor()._enqueue_parent_refresh(
+                msg, "viking://user/zzm", l0_body_changed=True
+            )
 
-        mark_pending.assert_not_called()
+        plan.assert_not_called()
 
     async def test_still_refreshes_within_the_user_tree(self):
         # The boundary must not stop refreshes of the account's own subtree.
         msg = SemanticMsg(uri="viking://user/zzm/memories", context_type="resource")
 
+        # 上游在这条继续路径上新增了 get_openviking_config()，测试环境没有配置
+        # 文件；停止路径在它之前就 return，所以只有这条需要 patch。
         with (
-            patch(f"{MODULE}.mark_semantic_sidecars_pending", new=AsyncMock()) as mark_pending,
+            patch(f"{MODULE}.plan_abstract_overview_refresh", new=AsyncMock()) as plan,
             patch(f"{MODULE}.get_viking_fs", new=MagicMock()),
+            patch(f"{MODULE}.get_openviking_config", new=MagicMock()),
             patch(f"{QUEUE_PKG}.get_queue_manager", new=MagicMock(return_value=None)),
         ):
-            await SemanticProcessor()._enqueue_parent_refresh(msg, "viking://user/zzm/memories")
+            await SemanticProcessor()._enqueue_parent_refresh(
+                msg, "viking://user/zzm/memories", l0_body_changed=True
+            )
 
-        assert mark_pending.await_args.kwargs["dir_uri"] == "viking://user/zzm"
+        assert plan.await_args.kwargs["dir_uri"] == "viking://user/zzm"
 
 
 class TestPermissionDeniedIsDropped:
