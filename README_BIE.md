@@ -194,7 +194,7 @@ curl -s http://127.0.0.1:1933/health
 | `OV_DOCKERHUB` | `docker.m.daocloud.io` | 置 `docker.io` 回官方源 |
 | `OV_GHCR` | `ghcr.m.daocloud.io` | uv 构建镜像源 |
 | `OV_APT_MIRROR` | 华为云 | 置空用镜像自带源；须 http 下直接 200（不能跳 https） |
-| `OV_CARGO_MIRROR` | USTC | 置空回 crates.io |
+| `OV_CARGO_MIRROR` | NJU 南大 | 置空回 crates.io；换源须确认 `config.json` 的 `dl` 也在镜像站 |
 | `OV_PYPI_INDEX` / `OV_PYPI_FILES` | 阿里云 | **必须成对**置空才回 pypi.org；实测阿里云约为 USTC 的 5 倍 |
 | `OV_BUILD_HTTP_PROXY` | 空 | 构建期代理，刻意不读 `HTTP_PROXY` |
 

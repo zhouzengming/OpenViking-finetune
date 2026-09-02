@@ -56,8 +56,29 @@ uv 构建镜像（ghcr.io）同样参数化，默认走 `ghcr.m.daocloud.io`，
 
 ### cargo 源
 
-crates.io 默认走 USTC：`sparse+https://mirrors.ustc.edu.cn/crates.io-index/`。
-用官方源：`OV_CARGO_MIRROR=`（置空）。实测 index 拉取 0.156s vs 直连 3.48s。
+crates.io 默认走**南大 NJU**：`sparse+https://mirror.nju.edu.cn/crates.io-index/`。
+用官方源：`OV_CARGO_MIRROR=`（置空）。
+
+端到端实测（容器内真跑 `cargo fetch --locked`，147 个 crate / 106 MB，
+三家 exit=0 即校验和全部通过）：
+
+| 镜像 | 首次(冷) | 复跑(热) | 类型 | 单文件吞吐中位 |
+|---|---:|---:|---|---:|
+| **NJU 南大** | **4s** | **3s** | 完整镜像 | 4.33 MB/s |
+| RSProxy 字节 | 19s | 3s | **缓存代理** | 3.20 MB/s |
+| USTC | 20s | 17s | 完整镜像 | 0.85 MB/s |
+
+USTC 三轮吞吐分别 0.85 / 0.84 / 0.85，稳得像带宽上限而非拥塞。
+**不选 RSProxy** 是因为它是缓存代理：冷 19s、热 3s，首次拉冷门 crate 会回源，
+构建机上表现不可预期；NJU 是完整镜像，冷热一致。
+
+⚠️ **选 cargo 源必须看 `config.json` 的 `dl` 字段**：
+
+    curl https://<mirror>/crates.io-index/config.json
+
+TUNA 与 BFSU 的 `dl` 仍是 `https://static.crates.io/crates`——**只镜像了 index，
+产物还从上游拿**，对无代理的构建容器等于没换源。USTC / RSProxy / NJU 三家才是
+自建下载。
 
 `cargo build --release` 的耗时大头是抓几百个 crate 而非编译——诊断依据：cargo
 进程 `State: S`、单线程、零子进程、无 rustc 进程、整机 CPU 97% 空闲。真正编译时
