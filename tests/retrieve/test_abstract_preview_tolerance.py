@@ -26,9 +26,9 @@ BODY_STARTING_WITH_RULE = "---\n本目录收录缺陷台账。"
 class TestLenientPreview:
     def test_strict_version_still_rejects_body_only_content(self):
         # Guards the premise: this is exactly what breaks queries today.
-        from openviking.storage.semantic_sidecar import SemanticSidecarFormatError
+        from openviking.storage.abstract_overview import AbstractOverviewFormatError
 
-        with pytest.raises(SemanticSidecarFormatError):
+        with pytest.raises(AbstractOverviewFormatError):
             body_for_preview(BODY_STARTING_WITH_RULE)
 
     def test_body_only_content_is_returned_unchanged(self):
