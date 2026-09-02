@@ -195,7 +195,7 @@ curl -s http://127.0.0.1:1933/health
 | `OV_GHCR` | `ghcr.m.daocloud.io` | uv 构建镜像源 |
 | `OV_APT_MIRROR` | USTC | 置空用镜像自带源 |
 | `OV_CARGO_MIRROR` | USTC | 置空回 crates.io |
-| `OV_PYPI_INDEX` / `OV_PYPI_FILES` | USTC | **必须成对**置空才回 pypi.org |
+| `OV_PYPI_INDEX` / `OV_PYPI_FILES` | 阿里云 | **必须成对**置空才回 pypi.org；实测阿里云约为 USTC 的 5 倍 |
 | `OV_BUILD_HTTP_PROXY` | 空 | 构建期代理，刻意不读 `HTTP_PROXY` |
 
 代理用独立变量名是有意的：shell 里的 `socks5://` 被静默继承进构建容器会出问题

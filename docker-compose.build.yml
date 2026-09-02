@@ -38,14 +38,18 @@ services:
         # cargo build 的耗时大头是抓几百个 crate，不是编译。
         # 用官方源：OV_CARGO_MIRROR= （置空即可）
         CARGO_MIRROR: ${OV_CARGO_MIRROR-sparse+https://mirrors.ustc.edu.cn/crates.io-index/}
-        # PyPI 默认走 USTC，供完全访问不到 pypi.org 的机器构建。
+        # PyPI 默认走阿里云，供完全访问不到 pypi.org 的机器构建。
+        # 选阿里云而非 USTC 是实测结果（本机无代理，3 个不同大小的 wheel 取平均）：
+        #   阿里云 1.83 / 华为云 1.73 / NJU 1.10 / BFSU 1.08 / USTC 0.36  MB/s
+        # USTC 慢约 5 倍，且 /pypi/web/packages 会 301 跳到 /pypi/packages，
+        # 每个产物多一次往返（581 个包）。阿里云直接 200。
         # 做法是在构建期改写 uv.lock（仓库里那份保持与上游一致），版本与
         # 全部 3857 个 sha256 均不变——镜像站提供的是逐字节相同的产物。
         # 两个变量必须成对：仅改 uv.lock 不够，sgmllib3k 这类源码包会在构建期
         # 经由 UV_DEFAULT_INDEX 解析 setuptools，绕过锁文件。
         # 回官方源：OV_PYPI_INDEX= OV_PYPI_FILES= （两者一起置空）
-        PYPI_INDEX: ${OV_PYPI_INDEX-https://mirrors.ustc.edu.cn/pypi/simple}
-        PYPI_FILES: ${OV_PYPI_FILES-https://mirrors.ustc.edu.cn/pypi/web}
+        PYPI_INDEX: ${OV_PYPI_INDEX-https://mirrors.aliyun.com/pypi/simple}
+        PYPI_FILES: ${OV_PYPI_FILES-https://mirrors.aliyun.com/pypi}
         # 构建期代理刻意用独立变量名，不直接读 HTTP_PROXY/HTTPS_PROXY：
         # 否则 shell 里的 socks5:// 之类会被静默继承进构建容器，而多数构建
         # 工具只认 http://，且 uv 经本地代理有僵死前科。要用时显式设置：
