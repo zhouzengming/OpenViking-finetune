@@ -33,17 +33,45 @@ OPENVIKING_VERSION=$(git describe --tags --match 'v[0-9]*' | sed 's/^v//; s/-\([
 
 `OPENVIKING_VERSION` 是**必填**的，compose 用 `:?` 强制。原因见文末「版本号」。
 
-### 受限网络（国内）需要多做一步
+### 受限网络：先把 syntax 前端镜像备到本地
 
 四个基础镜像、apt、cargo、PyPI 源在 `docker-compose.build.yml` 里**已经默认走镜像站**，
-无需额外设置。但有一处参数化不掉：`Dockerfile` 第一行的
+无需额外设置。唯一参数化不掉的是 `Dockerfile` 第一行：
 
 ```
 # syntax=docker/dockerfile:1.9
 ```
 
-`syntax` 指令在 ARG 解析之前生效，BuildKit 会去 `auth.docker.io` 取这个前端镜像，
-连不上就整个构建失败在第 1 行。用 `BUILDKIT_SYNTAX` 覆盖，改成两步：
+`syntax` 指令在 ARG 解析之前生效，BuildKit 必须先解析这个前端镜像引用。
+**关键点：BuildKit 解析 frontend 时不走 `/etc/docker/daemon.json` 里的 `proxies`**——
+实测报错是 `dial tcp 199.59.148.8:443: i/o timeout`，直连 IP，代理没参与。
+而 `docker pull` 是 daemon 自己拉，**会**用 daemon.json 的代理。
+
+所以在这类机器上，只要把前端镜像**预先放进本地镜像库**，BuildKit 就不再远程解析，
+上面那条一条命令即可正常跑：
+
+```bash
+docker pull docker/dockerfile:1.9        # 一次即可，之后一直有效
+```
+
+daemon 也连不上 docker.io 时，改用镜像站再打上原名：
+
+```bash
+docker pull docker.m.daocloud.io/docker/dockerfile:1.9
+docker tag  docker.m.daocloud.io/docker/dockerfile:1.9 docker/dockerfile:1.9
+```
+
+实测对照（最小 Dockerfile，同样带 `# syntax=`）：
+
+| 本地镜像库有 `docker/dockerfile:1.9` | 结果 |
+|---|---|
+| 无 | ❌ 去 `auth.docker.io`，超时失败在第 1 行 |
+| 有 | ✅ 直接 DONE，不再有网络请求 |
+
+#### 备选：`BUILDKIT_SYNTAX`
+
+不想动本地镜像库的话，也可以用 build-arg 覆盖前端引用。代价是**必须拆成两步**，
+因为 `up -d --build` 不接受 `--build-arg`：
 
 ```bash
 V=$(git describe --tags --match 'v[0-9]*' | sed 's/^v//; s/-\([0-9]*\)-g/+\1.g/')
@@ -54,22 +82,25 @@ OPENVIKING_VERSION=$V docker compose -f docker-compose.build.yml build \
 OPENVIKING_VERSION=$V docker compose -f docker-compose.build.yml up -d
 ```
 
-⚠️ **必须是 `--build-arg`，环境变量无效**。实测对照（构造一个同样带 `# syntax=`
-的最小 Dockerfile）：
+⚠️ **必须是 `--build-arg`，环境变量无效**：
 
 | 形式 | 结果 |
 |---|---|
 | `docker build --build-arg BUILDKIT_SYNTAX=...` | ✅ 成功 |
 | `BUILDKIT_SYNTAX=... docker build` | ❌ 仍去 `auth.docker.io`，失败 |
-| 都不给 | ❌ 失败 |
+| 都不给（且本地无该镜像） | ❌ 失败 |
 
-拆成两步是因为 `up -d --build` 不接受 `--build-arg`。
+推荐前者：预拉一次前端镜像之后，日常就只剩最上面那一条命令。
 
-完全离线的机器可以改为先把前端镜像备到本地：
+### 构建耗时与「看起来卡住了」
+
+冷构建约 10 分钟，其中 apt 与 cargo 抓包占大头。**不要用 `| tail -N` 看进度**——
+会缓冲住输出，让人误以为卡死（这个坑我自己踩过两次）。要么直接看，要么重定向到
+文件再 `tail -f`：
 
 ```bash
-docker pull docker.m.daocloud.io/docker/dockerfile:1.9
-docker tag  docker.m.daocloud.io/docker/dockerfile:1.9 docker/dockerfile:1.9
+OPENVIKING_VERSION=$V docker compose -f docker-compose.build.yml build > /tmp/ov-build.log 2>&1 &
+tail -f /tmp/ov-build.log
 ```
 
 ## 首次启动：配置文件
@@ -175,7 +206,13 @@ cd ~/.containers/openviking && docker compose up -d
 ## 排障
 
 **构建第 1 行就失败，报 `auth.docker.io` 超时**
-→ `# syntax=` 前端拉不到，见上面「受限网络」。
+→ `# syntax=` 前端拉不到。`docker pull docker/dockerfile:1.9` 一次即可，见上面「受限网络」。
+注意 BuildKit 解析 frontend **不走** daemon.json 的代理，所以「`docker pull` 能成功但
+构建失败」是正常现象，不矛盾。
+
+**构建长时间没输出，像是卡死了**
+→ 先确认不是你自己用 `| tail -N` 把输出缓冲住了。冷构建约 10 分钟，apt 与 cargo
+抓包占大头。见上面「构建耗时」。
 
 **构建 `exit 2`，说要 `OPENVIKING_VERSION`**
 → `openviking/_version.py` 受 `.gitignore` 管理、不入版本库。全新 clone 上它不存在
