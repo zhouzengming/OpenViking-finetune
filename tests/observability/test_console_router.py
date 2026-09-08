@@ -222,3 +222,32 @@ async def test_console_router_defaults_timezone_to_none_when_missing():
         await client.get("/api/v1/console/dashboard/summary")
 
     assert service.dashboard_call["timezone_name"] is None
+
+
+@pytest.mark.asyncio
+async def test_console_router_forwards_audit_api_type_exclusion():
+    """`exclude_api_type` reaches the service, and shares the comma-splitting
+    convention of the other multi-value audit filters.
+
+    The console hides its own polling (`/api/v1/observer/system`) by default, so
+    this parameter is on the hot path for every audit page load. Omitting it must
+    stay a no-op rather than an empty exclusion, otherwise older callers would
+    start sending `NOT IN ()`.
+    """
+
+    service = FakeConsoleService()
+    transport = httpx.ASGITransport(app=_app_with_runtime(FakeRuntime(service)))
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get(
+            "/api/v1/console/audit",
+            params={"exclude_api_type": "observer,system"},
+        )
+
+    assert response.status_code == 200
+    assert service.audit_call["exclude_api_types"] == ["observer", "system"]
+
+    # 不传时是空列表（等价于不排除），不是 None——store 侧按 falsy 判断，
+    # 两者行为一致，但空列表让契约更明确。
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        await client.get("/api/v1/console/audit")
+    assert service.audit_call["exclude_api_types"] == []

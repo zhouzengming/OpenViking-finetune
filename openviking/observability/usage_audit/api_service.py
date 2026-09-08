@@ -127,11 +127,17 @@ class UsageAuditQueryService:
         api_types: list[str],
         page: int,
         page_size: int,
+        exclude_api_types: list[str] | None = None,
     ) -> dict[str, Any]:
         """Return filtered request audit rows.
 
         `created_at` is returned as a UTC ISO string; the client formats it in
         the viewer's locale on render.
+
+        `exclude_api_types` is keyword-only with a default so existing callers
+        keep working unchanged; it is applied as NOT IN alongside the include
+        filter, letting a caller hide a noisy type by default while still being
+        able to ask for it explicitly.
         """
         return await self._store.query_audit_logs(
             account_id=ctx.account_id,
@@ -139,6 +145,7 @@ class UsageAuditQueryService:
             request_id=request_id,
             statuses=statuses,
             api_types=api_types,
+            exclude_api_types=exclude_api_types or [],
             page=max(int(page), 1),
             page_size=min(max(int(page_size), 1), 100),
         )
