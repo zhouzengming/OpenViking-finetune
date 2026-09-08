@@ -120,6 +120,10 @@ async def audit_logs(
     request_id: Optional[str] = Query(None),
     status: Optional[list[str]] = Query(None),
     api_type: Optional[list[str]] = Query(None),
+    exclude_api_type: Optional[list[str]] = Query(
+        None,
+        description="API types to hide. Applied as NOT IN, so a type stays selectable via api_type.",
+    ),
     _ctx: RequestContext = require_role(Role.ROOT, Role.ADMIN, Role.USER),
 ):
     """Return filtered request audit logs."""
@@ -131,6 +135,7 @@ async def audit_logs(
         request_id=request_id,
         statuses=_split_multi(status),
         api_types=_split_multi(api_type),
+        exclude_api_types=_split_multi(exclude_api_type),
         page=page,
         page_size=page_size,
     )

@@ -684,6 +684,7 @@ class SQLiteUsageAuditStore:
         request_id: str | None = None,
         statuses: list[str] | None = None,
         api_types: list[str] | None = None,
+        exclude_api_types: list[str] | None = None,
         page: int = 1,
         page_size: int = 10,
     ) -> dict[str, Any]:
@@ -695,6 +696,7 @@ class SQLiteUsageAuditStore:
                 request_id,
                 statuses or [],
                 api_types or [],
+                exclude_api_types or [],
                 int(page),
                 int(page_size),
             )
@@ -706,6 +708,7 @@ class SQLiteUsageAuditStore:
         request_id: str | None,
         statuses: list[str],
         api_types: list[str],
+        exclude_api_types: list[str],
         page: int,
         page_size: int,
     ) -> dict[str, Any]:
@@ -726,6 +729,13 @@ class SQLiteUsageAuditStore:
             placeholders = ", ".join("?" for _ in api_types)
             where.append(f"api_type IN ({placeholders})")
             params.extend(api_types)
+        if exclude_api_types:
+            # 排除项进的是同一个 where，因此下面的 summary 与行查询共用它——
+            # total / success_rate 必须与屏幕上可见的行属于同一集合，否则调用方
+            # 看到的是「按 A 集合统计、按 B 集合展示」，且不会有任何报错。
+            placeholders = ", ".join("?" for _ in exclude_api_types)
+            where.append(f"api_type NOT IN ({placeholders})")
+            params.extend(exclude_api_types)
         where_sql = " AND ".join(where)
         summary = self._conn.execute(
             f"""
@@ -753,12 +763,34 @@ class SQLiteUsageAuditStore:
             """,
             [*params, page_size, offset],
         ).fetchall()
+        # 筛选器选项的全集。刻意**不带** api_type 的包含/排除条件（否则被过滤掉的
+        # 类型就再也不会出现在选项里，用户无法把它勾回来），但保留 account/user
+        # 作用域，不能把别人账号的类型泄漏出去。表受
+        # audit_retention_per_account 封顶，这次 DISTINCT 的开销可忽略。
+        scope_where = ["account_id = ?"]
+        scope_params: list[Any] = [account_id]
+        if user_id:
+            scope_where.append("user_id = ?")
+            scope_params.append(user_id)
+        available_api_types = [
+            str(row["api_type"])
+            for row in self._conn.execute(
+                f"""
+                SELECT DISTINCT api_type
+                FROM request_audit
+                WHERE {" AND ".join(scope_where)}
+                ORDER BY api_type
+                """,
+                scope_params,
+            ).fetchall()
+        ]
         return {
             "total": total,
             "success_rate": (success / total) if total else 0.0,
             "page": page,
             "page_size": page_size,
             "items": [self._audit_item(row) for row in rows],
+            "available_api_types": available_api_types,
         }
 
     @staticmethod

@@ -823,3 +823,143 @@ async def test_context_heatmap_rebuckets_hour_for_shanghai(tmp_path):
         assert match["total"] == 1
     finally:
         await store.close()
+
+
+@pytest.mark.asyncio
+async def test_query_audit_logs_excludes_api_types(tmp_path):
+    """`exclude_api_types` drops matching rows from both the page and the summary.
+
+    Motivation: the console's own polling (`/api/v1/observer/system`) dominates the
+    audit table, and callers want it hidden by default while still being able to
+    ask for it explicitly. Exclusion has to be expressed server-side — filtering
+    after the fact would leave `total` and `success_rate` describing a different
+    set than the rows on screen.
+    """
+
+    store = SQLiteUsageAuditStore(tmp_path / "usage.sqlite3")
+    await store.initialize()
+    try:
+        await store.record_batch(
+            [
+                _event(
+                    "http.request",
+                    {
+                        "request_id": "req-observer",
+                        "method": "GET",
+                        "route": "/api/v1/observer/system",
+                        "status": "200",
+                        "duration_seconds": 0.01,
+                    },
+                ),
+                _event(
+                    "http.request",
+                    {
+                        "request_id": "req-content",
+                        "method": "GET",
+                        "route": "/api/v1/content/read",
+                        "status": "200",
+                        "duration_seconds": 0.01,
+                    },
+                ),
+                _event(
+                    "http.request",
+                    {
+                        "request_id": "req-fs",
+                        "method": "GET",
+                        "route": "/api/v1/fs/ls",
+                        "status": "500",
+                        "duration_seconds": 0.01,
+                    },
+                ),
+            ]
+        )
+
+        excluded = await store.query_audit_logs(
+            account_id="acct-1",
+            exclude_api_types=["observer"],
+            page_size=10,
+        )
+
+        assert {item["request_id"] for item in excluded["items"]} == {"req-content", "req-fs"}
+        # 汇总必须与可见行同集合：2 行里 1 成功，成功率 0.5。若 total 仍是 3
+        # 或成功率仍按 3 行算，说明排除只作用在行查询上、没进 summary 的 where。
+        assert excluded["total"] == 2
+        assert excluded["success_rate"] == pytest.approx(0.5)
+
+        # 不传排除项时行为不变，老调用方不受影响。
+        everything = await store.query_audit_logs(account_id="acct-1", page_size=10)
+        assert everything["total"] == 3
+
+        # 显式只看被排除的那一类仍然可以——排除是默认值，不是屏蔽。
+        only_observer = await store.query_audit_logs(
+            account_id="acct-1",
+            api_types=["observer"],
+            page_size=10,
+        )
+        assert {item["request_id"] for item in only_observer["items"]} == {"req-observer"}
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_query_audit_logs_reports_available_api_types(tmp_path):
+    """The response carries the full api_type universe for the caller's scope.
+
+    Without this the console can only build its filter options from the rows on
+    the current page (default page size 10), so the dropdown is both incomplete
+    and self-erasing: a type that is currently filtered out never appears in the
+    rows, hence never appears as an option to turn back on.
+
+    The universe therefore must ignore the api_type include/exclude filters,
+    while still respecting account/user scoping.
+    """
+
+    store = SQLiteUsageAuditStore(tmp_path / "usage.sqlite3")
+    await store.initialize()
+    try:
+        await store.record_batch(
+            [
+                _event(
+                    "http.request",
+                    {
+                        "request_id": "req-observer",
+                        "method": "GET",
+                        "route": "/api/v1/observer/system",
+                        "status": "200",
+                        "duration_seconds": 0.01,
+                    },
+                ),
+                _event(
+                    "http.request",
+                    {
+                        "request_id": "req-content",
+                        "method": "GET",
+                        "route": "/api/v1/content/read",
+                        "status": "200",
+                        "duration_seconds": 0.01,
+                    },
+                ),
+            ]
+        )
+
+        # 被排除的类型仍然要出现在全集里——否则用户无法把它勾回来。
+        excluded = await store.query_audit_logs(
+            account_id="acct-1",
+            exclude_api_types=["observer"],
+            page_size=10,
+        )
+        assert excluded["available_api_types"] == ["content", "observer"]
+
+        # 收窄到单一类型时，全集同样不受影响。
+        narrowed = await store.query_audit_logs(
+            account_id="acct-1",
+            api_types=["content"],
+            page_size=10,
+        )
+        assert narrowed["available_api_types"] == ["content", "observer"]
+
+        # 但账号隔离要生效：别的账号的类型不能泄漏进来。
+        other = await store.query_audit_logs(account_id="acct-2", page_size=10)
+        assert other["available_api_types"] == []
+    finally:
+        await store.close()
