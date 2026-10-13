@@ -83,6 +83,43 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
+_FENCE_RE = re.compile(r"^```[^\n]*\n(?P<body>.*?)\n?```\s*$", re.DOTALL)
+_LEADING_RULE_RE = re.compile(r"\A(?:[-*_]{3,}[ \t]*(?:\n\s*|\Z))+")
+
+
+def sanitize_generated_summary(summary: str) -> str:
+    """Strip framing a model wraps around a summary before it becomes a body.
+
+    The result is embedded verbatim into an OKF sidecar, and
+    ``parse_abstract_overview`` distinguishes an OKF document from plain text by
+    whether the first line is ``---``. A summary opening with a horizontal rule
+    therefore yields a body that later parses as a document whose frontmatter is
+    never closed. Fenced blocks and invented frontmatter are removed for the same
+    reason: they are the model framing its answer, not summary content.
+
+    Only *leading* framing is removed. A rule between paragraphs is real content.
+    """
+    if not summary:
+        return ""
+
+    text = summary.strip()
+    fenced = _FENCE_RE.match(text)
+    if fenced:
+        text = fenced.group("body").strip()
+
+    # Frontmatter the model invented: a closed --- block at the very start.
+    if text.startswith("---"):
+        lines = text.splitlines()
+        for index in range(1, len(lines)):
+            if lines[index].rstrip() == "---":
+                candidate = "\n".join(lines[index + 1 :]).strip()
+                if candidate:
+                    text = candidate
+                break
+
+    text = _LEADING_RULE_RE.sub("", text).strip()
+    return text
+
 
 class RequestQueueStats:
     processed: int = 0
@@ -1333,7 +1370,7 @@ class SemanticProcessor(DequeueHandlerBase):
         async with llm_sem:
             with bind_telemetry_stage("semantic_execute"):
                 summary = await vlm.get_completion_async(prompt)
-        return result(summary.strip())
+        return result(sanitize_generated_summary(summary))
 
     async def _generate_single_file_summary(
         self,

@@ -26,7 +26,11 @@ from openviking.parse.parsers.media.utils import (
 from openviking.parse.parsers.upload_utils import is_text_file
 from openviking.server.identity import RequestContext
 from openviking.service.task_work_index import TaskWorkRejected
-from openviking.storage.abstract_overview import body_for_preview, embedding_text_for_body
+from openviking.storage.abstract_overview import (
+    body_for_preview,
+    body_for_preview_lenient,
+    embedding_text_for_body,
+)
 from openviking.storage.index_action import FieldPatch, IndexAction
 from openviking.storage.queuefs import get_queue_manager
 from openviking.storage.queuefs.embedding_msg_converter import EmbeddingMsgConverter
@@ -425,8 +429,8 @@ async def vectorize_directory_meta(
     # Skill producers have already extracted the bodies. Their Markdown may
     # itself start with YAML frontmatter, which must not be parsed as OKF again.
     if not content_is_body:
-        abstract = body_for_preview(abstract)
-        overview = body_for_preview(overview)
+        abstract = body_for_preview_lenient(abstract)
+        overview = body_for_preview_lenient(overview)
     first_enqueue_error: Optional[Exception] = None
     enqueued_levels: set[int] = set()
     try:

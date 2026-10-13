@@ -21,7 +21,11 @@ from openviking.models.embedder.base import (
 from openviking.models.rerank import RerankClient
 from openviking.retrieve.retrieval_stats import get_stats_collector
 from openviking.server.identity import RequestContext
-from openviking.storage.abstract_overview import AbstractOverviewFormatError, body_for_preview
+from openviking.storage.abstract_overview import (
+    AbstractOverviewFormatError,
+    body_for_preview,
+    body_for_preview_lenient,
+)
 from openviking.storage.expr import FilterExpr
 from openviking.storage.vikingdb_manager import VikingDBManager, VikingDBManagerProxy
 from openviking.telemetry import get_current_telemetry
@@ -341,11 +345,7 @@ class HierarchicalRetriever:
                 # the public find/search preview contract body-only at its final
                 # conversion boundary. L2 user Markdown is intentionally left
                 # untouched, including ordinary YAML frontmatter.
-                try:
-                    abstract = body_for_preview(abstract)
-                except AbstractOverviewFormatError as exc:
-                    logger.warning("Malformed sidecar in retrieval result %s: %s", display_uri, exc)
-                    abstract = ""
+                abstract = body_for_preview_lenient(abstract)
 
             results.append(
                 MatchedContext(

@@ -397,6 +397,32 @@ def body_for_preview(raw: str | bytes) -> str:
     return document.body.rstrip("\r\n")
 
 
+def body_for_preview_lenient(raw: str | bytes) -> str:
+    """Return user-visible Markdown, accepting content that is already body-only.
+
+    ``parse_abstract_overview`` decides "is this an overview document?" purely from
+    whether the first line is ``---``. That is ambiguous: ``---`` is also a
+    Markdown horizontal rule, so a plain body opening with one is read as an OKF
+    document whose frontmatter never closes, and the strict accessor raises.
+
+    Callers that hold content of *unknown* provenance — an index record that may
+    be a legacy full overview or an already-stripped body — need the reduction to
+    happen only when the content really is an overview. A parse failure here means
+    "not an overview document", which for those callers means "already body-only", so
+    the content is returned untouched rather than failing the whole operation.
+
+    Use :func:`body_for_preview` instead wherever the input is known to be a raw
+    overview and a malformed one should be surfaced.
+    """
+
+    try:
+        return body_for_preview(raw)
+    except AbstractOverviewFormatError:
+        if isinstance(raw, bytes):
+            return raw.decode("utf-8", errors="replace")
+        return raw
+
+
 def parse_overview_file_summaries(overview_content: str | bytes) -> Dict[str, str]:
     """Extract direct-file summaries from an overview body."""
     overview = body_for_preview(overview_content)
