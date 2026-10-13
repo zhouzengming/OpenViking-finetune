@@ -45,6 +45,10 @@ ERROR_CODE_TO_HTTP_STATUS = {
     "RESOURCE_EXHAUSTED": 429,
     "FAILED_PRECONDITION": 412,
     "ABORTED": 409,
+    # 499 is nginx's non-standard "client closed request". Nothing reads this
+    # response, but a distinct status keeps abandoned requests out of the 5xx
+    # error rate.
+    "CANCELLED": 499,
     "DEADLINE_EXCEEDED": 504,
     "UNAVAILABLE": 503,
     "INTERNAL": 500,

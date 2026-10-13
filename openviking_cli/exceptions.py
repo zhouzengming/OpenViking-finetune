@@ -104,6 +104,17 @@ class AbortedError(OpenVikingError):
         super().__init__(message, code="ABORTED", details=details)
 
 
+class ClientDisconnectedError(OpenVikingError):
+    """Client went away before the operation finished."""
+
+    def __init__(self, operation: str = "operation"):
+        super().__init__(
+            f"Client disconnected before {operation} finished",
+            code="CANCELLED",
+            details={"operation": operation},
+        )
+
+
 # ============= Authentication Errors =============
 
 
