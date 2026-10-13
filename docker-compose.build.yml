@@ -1,0 +1,87 @@
+# 一个文件搞定「从源码完整构建 + 启动服务」。
+#
+#   OPENVIKING_VERSION=$(git describe --tags --match 'v[0-9]*' | sed 's/^v//; s/-\([0-9]*\)-g/+\1.g/') \
+#     docker compose -f docker-compose.build.yml up -d --build
+#
+# 走的是仓库根 Dockerfile 的完整构建（Rust 编译 ov CLI + C++ 扩展 +
+# web-studio SPA + uv sync），首次很慢，之后靠 BuildKit cache mount 提速。
+# 若改动是纯 Python 且未新增依赖，用 docker/bie-overlay/build.sh 更快。
+#
+# 上游自带的 docker-compose.yml 是拉预构建镜像 + Caddy 边车，与本文件无关。
+
+services:
+  openviking:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        # 必填。openviking/_version.py 受 .gitignore 管理：全新 clone 上它不存在，
+        # 构建会 exit 2；本机残留时又会被读到过期版本号且不报错。两种机器行为
+        # 不一致，所以这里用 :? 强制显式传入，宁可失败也不要静默打错版本。
+        OPENVIKING_VERSION: ${OPENVIKING_VERSION:?请显式设置，例如 OPENVIKING_VERSION=$(git describe --tags --match 'v[0-9]*' | sed 's/^v//; s/-\([0-9]*\)-g/+\1.g/')}
+        # locked = 锁文件对不上即失败（可复现）；auto = 过期则自动 uv lock
+        UV_LOCK_STRATEGY: ${UV_LOCK_STRATEGY:-locked}
+        # 四个基础镜像默认走 daocloud 镜像站：本机 daemon 拉取走 socks5 代理，
+        # 而 no-proxy 放行了 *.daocloud.io，所以走镜像站既换源也绕开代理瓶颈。
+        # 回官方源：OV_DOCKERHUB=docker.io OV_GHCR=ghcr.io
+        # 注意 Dockerfile 里的 ARG 默认值仍是上游引用，裸 docker build 不受影响。
+        RUST_IMAGE: ${OV_DOCKERHUB:-docker.m.daocloud.io}/library/rust:1.91.1-trixie
+        NODE_IMAGE: ${OV_DOCKERHUB:-docker.m.daocloud.io}/library/node:24-trixie-slim
+        RUNTIME_IMAGE: ${OV_DOCKERHUB:-docker.m.daocloud.io}/library/python:3.13-slim-trixie
+        UV_IMAGE: ${OV_GHCR:-ghcr.m.daocloud.io}/astral-sh/uv:python3.13-trixie-slim
+        # Debian apt 源默认走华为云（构建容器直连 deb.debian.org 在国内很慢，
+        # 且构建期代理默认为空）。用 http:// 而非 https://：运行时阶段是在这条
+        # apt 里才装的 ca-certificates，https 会先有鸡先有蛋——**因此镜像站必须
+        # 在 http 下直接 200，不能 302 跳 https**，腾讯云就因此被排除（虽然快）。
+        # 实测（本机无代理，2 个 deb 取平均下载速度）：
+        #   华为云 10.7 / NJU 5.8 / 阿里云 0.88 / USTC 0.68  MB/s
+        # 华为云约为原 USTC 的 15 倍，且 trixie / trixie-updates /
+        # trixie-security 三个 suite 的 InRelease 均 http 直接 200、零重定向。
+        # 用镜像自带源：OV_APT_MIRROR= （置空即可）
+        APT_MIRROR: ${OV_APT_MIRROR-http://repo.huaweicloud.com}
+        # crates.io 默认走南大（NJU）。实测端到端 `cargo fetch --locked`
+        # （147 个 crate / 106 MB，全部校验和通过）：
+        #   NJU 冷 4s 热 3s ｜ RSProxy 冷 19s 热 3s ｜ USTC 冷 20s 热 17s
+        # 单文件吞吐中位数：NJU 4.33 / RSProxy 3.20 / USTC 0.85 MB/s（USTC 三轮
+        # 分别 0.85/0.84/0.85，稳得像带宽上限而非拥塞）。
+        # 不选 RSProxy 是因为它是**缓存代理**：冷 19s、热 3s，首次拉冷门 crate
+        # 会回源；NJU 是完整镜像，冷热一致。
+        # ⚠️ 选源要看 config.json 的 `dl`：TUNA / BFSU 只镜像 index，dl 仍指向
+        # 上游 static.crates.io，对无代理的构建容器等于没换。
+        # 用官方源：OV_CARGO_MIRROR= （置空即可）
+        CARGO_MIRROR: ${OV_CARGO_MIRROR-sparse+https://mirror.nju.edu.cn/crates.io-index/}
+        # PyPI 默认走阿里云，供完全访问不到 pypi.org 的机器构建。
+        # 选阿里云而非 USTC 是实测结果（本机无代理，3 个不同大小的 wheel 取平均）：
+        #   阿里云 1.83 / 华为云 1.73 / NJU 1.10 / BFSU 1.08 / USTC 0.36  MB/s
+        # USTC 慢约 5 倍，且 /pypi/web/packages 会 301 跳到 /pypi/packages，
+        # 每个产物多一次往返（581 个包）。阿里云直接 200。
+        # 做法是在构建期改写 uv.lock（仓库里那份保持与上游一致），版本与
+        # 全部 3857 个 sha256 均不变——镜像站提供的是逐字节相同的产物。
+        # 两个变量必须成对：仅改 uv.lock 不够，sgmllib3k 这类源码包会在构建期
+        # 经由 UV_DEFAULT_INDEX 解析 setuptools，绕过锁文件。
+        # 回官方源：OV_PYPI_INDEX= OV_PYPI_FILES= （两者一起置空）
+        PYPI_INDEX: ${OV_PYPI_INDEX-https://mirrors.aliyun.com/pypi/simple}
+        PYPI_FILES: ${OV_PYPI_FILES-https://mirrors.aliyun.com/pypi}
+        # 构建期代理刻意用独立变量名，不直接读 HTTP_PROXY/HTTPS_PROXY：
+        # 否则 shell 里的 socks5:// 之类会被静默继承进构建容器，而多数构建
+        # 工具只认 http://，且 uv 经本地代理有僵死前科。要用时显式设置：
+        #   OV_BUILD_HTTP_PROXY=http://127.0.0.1:10809 docker compose ... --build
+        HTTP_PROXY: ${OV_BUILD_HTTP_PROXY:-}
+        HTTPS_PROXY: ${OV_BUILD_HTTPS_PROXY:-${OV_BUILD_HTTP_PROXY:-}}
+        NO_PROXY: ${OV_BUILD_NO_PROXY:-localhost,127.0.0.1}
+    image: openviking:${OPENVIKING_IMAGE_TAG:-source}
+    container_name: ${OPENVIKING_CONTAINER_NAME:-openviking}
+    ports:
+      - "${OPENVIKING_SERVER_PORT:-1933}:1933"
+    volumes:
+      # 运行时状态放仓库外，避免污染工作树。首次启动若无 ov.conf，可设
+      # OPENVIKING_CONF_CONTENT 传完整 JSON，或 docker exec 进去跑 openviking-server init。
+      - ${OPENVIKING_STATE_DIR:-${HOME}/.openviking-container}/.openviking:/app/.openviking
+      - ${OPENVIKING_STATE_DIR:-${HOME}/.openviking-container}/data:/app/data
+    healthcheck:
+      test: ["CMD", "openviking-entrypoint", "--healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
