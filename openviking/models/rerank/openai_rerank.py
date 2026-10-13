@@ -13,6 +13,8 @@ from typing import Dict, List, Optional
 import requests
 
 from openviking.models.rerank.base import RerankBase
+from openviking.models.rerank.errors import RerankError, rerank_error_from_exception
+from openviking.utils.model_retry import ERROR_CLASS_PERMANENT
 from openviking_cli.utils import get_logger
 
 logger = get_logger(__name__)
@@ -51,6 +53,7 @@ class OpenAIRerankClient(RerankBase):
         model_name: str,
         extra_headers: Optional[Dict[str, str]] = None,
         timeout: float = 30.0,
+        max_retries: int = 0,
     ) -> None:
         """
         Initialize OpenAI-compatible rerank client.
@@ -62,8 +65,9 @@ class OpenAIRerankClient(RerankBase):
             extra_headers: Optional extra headers for API requests
             timeout: HTTP request timeout in seconds. Defaults to 30. Increase for
                 local LLM servers that incur model cold-start latency on the first call.
+            max_retries: Extra attempts after a retryable failure; 0 disables retrying.
         """
-        super().__init__()
+        super().__init__(max_retries=max_retries)
         self.api_key = api_key
         self.api_base = api_base
         self.model_name = model_name
@@ -90,6 +94,9 @@ class OpenAIRerankClient(RerankBase):
                 },
                 "parameters": {
                     "return_documents": False,
+                    # Without top_n a service applies its own default and
+                    # returns a partial ranking, leaving the rest unscored.
+                    "top_n": len(documents),
                 },
             }
         return {
@@ -97,7 +104,9 @@ class OpenAIRerankClient(RerankBase):
             "query": query,
             "documents": documents,
             # Required by some OpenAI-compatible providers (e.g. Scaleway);
-            # matches CohereRerankClient and is harmless elsewhere.
+            # matches CohereRerankClient and is harmless elsewhere. It also
+            # prevents the service's default top_n from returning a partial ranking
+            # that would leave the rest of the documents unscored.
             "top_n": len(documents),
         }
 
@@ -115,21 +124,8 @@ class OpenAIRerankClient(RerankBase):
             return None
         return response_json.get("results")
 
-    def rerank_batch(self, query: str, documents: List[str]) -> Optional[List[float]]:
-        """
-        Batch rerank documents against a query.
-
-        Args:
-            query: Query text
-            documents: List of document texts to rank
-
-        Returns:
-            List of rerank scores for each document (same order as input),
-            or None when rerank fails and the caller should fall back
-        """
-        if not documents:
-            return []
-
+    def _rerank_once(self, query: str, documents: List[str]) -> List[Optional[float]]:
+        """One rerank call. Retrying is the base class's job."""
         req_body = self._build_request_body(query, documents)
 
         try:
@@ -154,8 +150,11 @@ class OpenAIRerankClient(RerankBase):
 
             results = self._extract_results(result)
             if not results:
-                logger.warning(f"[OpenAIRerankClient] Unexpected response format: {result}")
-                return None
+                raise RerankError(
+                    f"Unexpected response format: {result}",
+                    provider=self.provider,
+                    error_class=ERROR_CLASS_PERMANENT,
+                )
 
             if len(results) != len(documents):
                 logger.warning(
@@ -164,26 +163,29 @@ class OpenAIRerankClient(RerankBase):
                     len(results),
                 )
 
-            # Results may be sparse or out of order. Missing documents keep a
-            # zero score while returned scores map back to their input indexes.
+            # Results may be sparse or out of order. A document the service
+            # left out stays None so the caller can keep its vector score; a
+            # fabricated 0.0 would instead prune it against any threshold.
             # Both "relevance_score" (singular) and "relevance_scores" (plural)
             # are accepted — DashScope uses the singular form.
-            scores = [0.0] * len(documents)
+            scores: List[Optional[float]] = [None] * len(documents)
             for item in results:
                 idx = item.get("index")
                 if idx is None or not (0 <= idx < len(documents)):
-                    logger.warning(
-                        "[OpenAIRerankClient] Out-of-bounds or missing index in result: %s", item
+                    raise RerankError(
+                        f"Out-of-bounds or missing index in result: {item}",
+                        provider=self.provider,
+                        error_class=ERROR_CLASS_PERMANENT,
                     )
-                    return None
                 scores[idx] = item.get("relevance_score", item.get("relevance_scores", 0.0))
 
             logger.debug(f"[OpenAIRerankClient] Reranked {len(documents)} documents")
             return scores
 
+        except RerankError:
+            raise
         except Exception as e:
-            logger.error(f"[OpenAIRerankClient] Rerank failed: {e}")
-            return None
+            raise rerank_error_from_exception(e, provider=self.provider) from e
 
     @classmethod
     def from_config(cls, config) -> Optional["OpenAIRerankClient"]:
@@ -204,4 +206,5 @@ class OpenAIRerankClient(RerankBase):
             model_name=config.model or "qwen3-rerank",
             extra_headers=config.extra_headers,
             timeout=config.timeout,
+            max_retries=config.max_retries,
         )

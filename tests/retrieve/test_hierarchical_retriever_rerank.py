@@ -510,3 +510,71 @@ async def test_convert_to_matched_contexts_defaults_tags_and_body_previews():
         markdown,
         "",
     ]
+
+
+@pytest.mark.asyncio
+async def test_strict_mode_refuses_the_search_instead_of_ranking_worse(monkeypatch):
+    # Strict mode is only worth having if the refusal reaches the caller —
+    # nothing between the reranker and the endpoint may swallow it.
+    from openviking.models.rerank.errors import RerankError
+    from openviking.utils.model_retry import ERROR_CLASS_AUTH
+    from openviking_cli.exceptions import UnavailableError
+
+    class FailingRerankClient(FakeRerankClient):
+        provider = "vikingdb"
+
+        def rerank_batch(self, query: str, documents: list[str]):
+            raise RerankError("bad key", provider="vikingdb", error_class=ERROR_CLASS_AUTH)
+
+    monkeypatch.setattr(
+        "openviking.retrieve.hierarchical_retriever.RerankClient.from_config",
+        lambda config: FailingRerankClient([]),
+    )
+
+    prefix = "vik" + "ing://"
+    retriever = HierarchicalRetriever(
+        storage=DummyStorage(
+            [
+                _result(f"{prefix}resources/file-b", 0.9),
+                _result(f"{prefix}resources/file-a", 0.8),
+            ]
+        ),
+        embedder=DummyEmbedder(),
+        rerank_config=RerankConfig(ak="ak", sk="sk", threshold=0.1, on_failure="error"),
+    )
+
+    with pytest.raises(UnavailableError):
+        await retriever.retrieve(_query(), ctx=_ctx(), limit=2, mode=RetrieverMode.THINKING)
+
+
+@pytest.mark.asyncio
+async def test_the_default_still_answers_when_rerank_fails(monkeypatch):
+    class FailingRerankClient(FakeRerankClient):
+        provider = "vikingdb"
+
+        def rerank_batch(self, query: str, documents: list[str]):
+            raise RuntimeError("provider down")
+
+    monkeypatch.setattr(
+        "openviking.retrieve.hierarchical_retriever.RerankClient.from_config",
+        lambda config: FailingRerankClient([]),
+    )
+
+    prefix = "vik" + "ing://"
+    retriever = HierarchicalRetriever(
+        storage=DummyStorage(
+            [
+                _result(f"{prefix}resources/file-b", 0.9),
+                _result(f"{prefix}resources/file-a", 0.8),
+            ]
+        ),
+        embedder=DummyEmbedder(),
+        rerank_config=_config(),
+    )
+
+    result = await retriever.retrieve(_query(), ctx=_ctx(), limit=2, mode=RetrieverMode.THINKING)
+
+    assert [ctx.uri for ctx in result.matched_contexts] == [
+        f"{prefix}resources/file-b",
+        f"{prefix}resources/file-a",
+    ]

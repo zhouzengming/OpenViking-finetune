@@ -364,6 +364,20 @@ class TelemetrySummaryBuilder:
                         }
                     )
 
+        if cls._has_metric_prefix("rerank", counters, gauges):
+            # Rerank degradations are invisible in the results themselves — an
+            # unscored document simply keeps its vector score — so they are
+            # only observable here.
+            summary["rerank"] = {
+                "calls": cls._i(counters.get("rerank.calls"), 0),
+                "documents": cls._i(counters.get("rerank.documents"), 0),
+                "unscored_docs": cls._i(counters.get("rerank.unscored_docs"), 0),
+                "retries": cls._i(counters.get("rerank.retries"), 0),
+                "fallbacks": cls._i(counters.get("rerank.fallbacks"), 0),
+                "rate_limited": cls._i(counters.get("rerank.rate_limited"), 0),
+                "failures": cls._counter_breakdown("rerank.failures", counters),
+            }
+
         if cls._has_metric_prefix("semantic_nodes", counters, gauges):
             summary["semantic_nodes"] = {
                 "total": gauges.get("semantic_nodes.total"),

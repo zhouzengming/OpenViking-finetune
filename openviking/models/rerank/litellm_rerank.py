@@ -9,6 +9,8 @@ import time
 from typing import Any, List, Optional
 
 from openviking.models.rerank.base import RerankBase
+from openviking.models.rerank.errors import RerankError, rerank_error_from_exception
+from openviking.utils.model_retry import ERROR_CLASS_PERMANENT
 from openviking_cli.utils import get_logger
 
 logger = get_logger(__name__)
@@ -30,7 +32,13 @@ class LiteLLMRerankClient(RerankBase):
     LiteLLM rerank API client.
     """
 
-    def __init__(self, api_key: Optional[str], api_base: Optional[str], model_name: str):
+    def __init__(
+        self,
+        api_key: Optional[str],
+        api_base: Optional[str],
+        model_name: str,
+        max_retries: int = 0,
+    ):
         """
         Initialize LiteLLM rerank client.
 
@@ -38,28 +46,16 @@ class LiteLLMRerankClient(RerankBase):
             api_key: API key for LiteLLM providers (optional, can come from env)
             api_base: API base for LiteLLM providers (optional, can come from env)
             model_name: Model name to use for reranking
+            max_retries: Extra attempts after a retryable failure; 0 disables retrying.
         """
-        super().__init__()
+        super().__init__(max_retries=max_retries)
         self.api_key = api_key
         self.api_base = api_base
         self.model_name = model_name
         self.provider = "litellm"
 
-    def rerank_batch(self, query: str, documents: List[str]) -> Optional[List[float]]:
-        """
-        Batch rerank documents against a query.
-
-        Args:
-            query: Query text
-            documents: List of document texts to rank
-
-        Returns:
-            List of rerank scores for each document (same order as input),
-            or None when rerank fails and the caller should fall back
-        """
-        if not documents:
-            return []
-
+    def _rerank_once(self, query: str, documents: List[str]) -> List[Optional[float]]:
+        """One rerank call. Retrying is the base class's job."""
         try:
             import litellm
 
@@ -85,24 +81,28 @@ class LiteLLMRerankClient(RerankBase):
 
             results = response.results
             if not results:
-                logger.warning(f"[LiteLLMRerankClient] Unexpected response format: {response}")
-                return None
+                raise RerankError(
+                    f"Unexpected response format: {response}",
+                    provider=self.provider,
+                    error_class=ERROR_CLASS_PERMANENT,
+                )
 
             if len(results) != len(documents):
-                logger.warning(
-                    "[LiteLLMRerankClient] Unexpected rerank result length: expected=%s actual=%s",
-                    len(documents),
-                    len(results),
+                raise RerankError(
+                    f"Unexpected rerank result length: expected={len(documents)} "
+                    f"actual={len(results)}",
+                    provider=self.provider,
+                    error_class=ERROR_CLASS_PERMANENT,
                 )
-                return None
 
             for item in results:
                 idx = _result_field(item, "index")
                 if idx is None or not (0 <= idx < len(documents)):
-                    logger.warning(
-                        "[LiteLLMRerankClient] Out-of-bounds or missing index in result: %s", item
+                    raise RerankError(
+                        f"Out-of-bounds or missing index in result: {item}",
+                        provider=self.provider,
+                        error_class=ERROR_CLASS_PERMANENT,
                     )
-                    return None
 
             # Results may not be in original order — sort by index
             sorted_results = sorted(results, key=lambda x: _result_field(x, "index"))
@@ -111,9 +111,10 @@ class LiteLLMRerankClient(RerankBase):
             logger.debug(f"[LiteLLMRerankClient] Reranked {len(documents)} documents")
             return scores
 
+        except RerankError:
+            raise
         except Exception as e:
-            logger.error(f"[LiteLLMRerankClient] Rerank failed: {e}")
-            return None
+            raise rerank_error_from_exception(e, provider=self.provider) from e
 
     @classmethod
     def from_config(cls, config) -> Optional["LiteLLMRerankClient"]:
@@ -132,4 +133,5 @@ class LiteLLMRerankClient(RerankBase):
             api_key=config.api_key,
             api_base=config.api_base,
             model_name=config.model,
+            max_retries=config.max_retries,
         )

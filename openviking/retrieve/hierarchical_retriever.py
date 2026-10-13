@@ -5,6 +5,8 @@ Global vector retrieval with optional reranking of the recalled candidates.
 """
 
 import asyncio
+import contextvars
+import functools
 import math
 import time
 from datetime import datetime, timezone
@@ -19,6 +21,8 @@ from openviking.models.embedder.base import (
     embedder_supports_multimodal,
 )
 from openviking.models.rerank import RerankClient
+from openviking.models.rerank.errors import RerankError
+from openviking.models.rerank.executor import get_rerank_executor
 from openviking.retrieve.retrieval_stats import get_stats_collector
 from openviking.server.identity import RequestContext
 from openviking.storage.abstract_overview import (
@@ -29,13 +33,22 @@ from openviking.storage.abstract_overview import (
 from openviking.storage.expr import FilterExpr
 from openviking.storage.vikingdb_manager import VikingDBManager, VikingDBManagerProxy
 from openviking.telemetry import get_current_telemetry
+from openviking.utils.model_retry import (
+    ERROR_CLASS_PERMANENT,
+    ERROR_CLASS_QUOTA_EXCEEDED,
+    classify_api_error,
+)
 from openviking.utils.tags import normalize_search_tags
 from openviking.utils.time_decay import parse_duration_ms
 from openviking.utils.token_estimation import (
     estimate_text_tokens,
     truncate_text_to_token_budget,
 )
-from openviking_cli.exceptions import InvalidArgumentError
+from openviking_cli.exceptions import (
+    InvalidArgumentError,
+    ResourceExhaustedError,
+    UnavailableError,
+)
 from openviking_cli.retrieve.types import (
     ContextType,
     MatchedContext,
@@ -76,6 +89,8 @@ class HierarchicalRetriever:
         self.embedder = embedder
         self.rerank_config = rerank_config
         self.rerank_max_input_tokens = rerank_config.max_input_tokens if rerank_config else 0
+        self.rerank_on_failure = rerank_config.on_failure if rerank_config else "fallback"
+        self.rerank_max_concurrency = rerank_config.max_concurrency if rerank_config else 0
 
         # Use rerank threshold if available, otherwise use a default
         self.threshold = rerank_config.threshold if rerank_config else 0
@@ -277,6 +292,61 @@ class HierarchicalRetriever:
             return score >= threshold
         return score > threshold
 
+    async def _call_rerank_client(
+        self, query: str, documents: List[str]
+    ) -> Optional[List[Optional[float]]]:
+        """Run the blocking provider call on rerank's own thread pool.
+
+        ``run_in_executor`` does not carry contextvars the way
+        ``asyncio.to_thread`` does, so the context is copied explicitly —
+        without it the telemetry bound to this request would not be reachable
+        from the worker thread, and retry counters would vanish.
+        """
+        context = contextvars.copy_context()
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            get_rerank_executor(self.rerank_max_concurrency),
+            functools.partial(context.run, self._rerank_client.rerank_batch, query, documents),
+        )
+
+    def _handle_rerank_failure(self, error: Exception, fallback_scores: List[float]) -> List[float]:
+        """Record a failed rerank, then degrade — or refuse, if configured to.
+
+        Degrading returns a plausible 200 built on vector scores alone, which
+        is why the counters exist: they are the only outward sign that ranking
+        quality dropped.
+        """
+        if isinstance(error, RerankError):
+            error_class = error.error_class
+            status_code = error.status_code
+        else:
+            error_class = classify_api_error(error)
+            status_code = None
+
+        telemetry = get_current_telemetry()
+        telemetry.count("rerank.fallbacks", 1)
+        telemetry.count(f"rerank.failures.{error_class}", 1)
+        if status_code == 429 or error_class == ERROR_CLASS_QUOTA_EXCEEDED:
+            # Throttling and a flaky upstream both classify as transient but
+            # call for different operational responses.
+            telemetry.count("rerank.rate_limited", 1)
+
+        if self.rerank_on_failure == "error":
+            logger.error("[HierarchicalRetriever] Rerank failed (%s): %s", error_class, error)
+            if status_code == 429 or error_class == ERROR_CLASS_QUOTA_EXCEEDED:
+                raise ResourceExhaustedError(
+                    f"Rerank provider is rate limiting: {error}",
+                    details={"error_class": error_class},
+                ) from error
+            raise UnavailableError("rerank", reason=str(error)) from error
+
+        logger.warning(
+            "[HierarchicalRetriever] Rerank failed (%s), fallback to vector scores: %s",
+            error_class,
+            error,
+        )
+        return fallback_scores
+
     async def _rerank_scores(
         self,
         query: str,
@@ -305,26 +375,45 @@ class HierarchicalRetriever:
             ]
 
         try:
-            scores = await asyncio.to_thread(
-                self._rerank_client.rerank_batch,
-                rerank_query,
-                [document for _, document in rerank_documents],
+            scores = await self._call_rerank_client(
+                rerank_query, [document for _, document in rerank_documents]
             )
         except Exception as e:
-            logger.warning(
-                "[HierarchicalRetriever] Rerank failed, fallback to vector scores: %s", e
-            )
-            return fallback_scores
+            return self._handle_rerank_failure(e, fallback_scores)
 
         if not scores or len(scores) != len(rerank_documents):
-            logger.warning(
-                "[HierarchicalRetriever] Invalid rerank result, fallback to vector scores"
+            return self._handle_rerank_failure(
+                RerankError(
+                    f"Invalid rerank result length: expected={len(rerank_documents)} "
+                    f"actual={len(scores) if scores else 0}",
+                    provider=getattr(self._rerank_client, "provider", "rerank"),
+                    error_class=ERROR_CLASS_PERMANENT,
+                ),
+                fallback_scores,
             )
-            return fallback_scores
 
         normalized_scores = list(fallback_scores)
+        unscored = 0
         for score, (index, _) in zip(scores, rerank_documents, strict=True):
+            if score is None:
+                # The provider reports None for a document the rerank service
+                # left out of its response. Keeping the vector score preserves
+                # the ranking that was computed for the rest of the batch.
+                unscored += 1
+                continue
             normalized_scores[index] = self._finite_score(score, fallback_scores[index])
+
+        telemetry = get_current_telemetry()
+        telemetry.count("rerank.calls", 1)
+        telemetry.count("rerank.documents", len(rerank_documents))
+        telemetry.count("rerank.unscored_docs", unscored)
+        if unscored:
+            logger.warning(
+                "[HierarchicalRetriever] %s/%s documents unscored by rerank, "
+                "kept their vector score",
+                unscored,
+                len(rerank_documents),
+            )
         return normalized_scores
 
     async def _convert_to_matched_contexts(
@@ -345,7 +434,11 @@ class HierarchicalRetriever:
                 # the public find/search preview contract body-only at its final
                 # conversion boundary. L2 user Markdown is intentionally left
                 # untouched, including ordinary YAML frontmatter.
-                abstract = body_for_preview_lenient(abstract)
+                try:
+                    abstract = body_for_preview(abstract)
+                except AbstractOverviewFormatError as exc:
+                    logger.warning("Malformed sidecar in retrieval result %s: %s", display_uri, exc)
+                    abstract = ""
 
             results.append(
                 MatchedContext(

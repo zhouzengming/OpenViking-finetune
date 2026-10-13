@@ -387,8 +387,10 @@ def create_app(
 
         # Cleanup
         from openviking.metrics.global_api import shutdown_metrics_async
+        from openviking.models.rerank.executor import shutdown_rerank_executor
         from openviking.observability.usage_audit import shutdown_usage_audit
 
+        shutdown_rerank_executor()
         await shutdown_usage_audit(app=app)
         await shutdown_metrics_async(app=app)
         if config.observability.metrics.enabled:

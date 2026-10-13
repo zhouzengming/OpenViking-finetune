@@ -4,7 +4,7 @@
 Cohere Rerank API Client.
 
 Drop-in replacement for VikingDB RerankClient, using Cohere's Rerank v3.5 API.
-Same interface: rerank_batch(query, documents) -> List[float]
+Same interface: rerank_batch(query, documents) -> List[Optional[float]]
 """
 
 # For logging, use Python's built-in logging
@@ -14,6 +14,8 @@ from typing import List, Optional
 import httpx
 
 from openviking.models.rerank.base import RerankBase
+from openviking.models.rerank.errors import RerankError, rerank_error_from_exception
+from openviking.utils.model_retry import ERROR_CLASS_PERMANENT
 from openviking_cli.utils import get_logger
 
 logger = get_logger(__name__)
@@ -27,8 +29,9 @@ class CohereRerankClient(RerankBase):
         api_key: str,
         model: str = "rerank-v3.5",
         api_base: str = "https://api.cohere.com",
+        max_retries: int = 0,
     ):
-        super().__init__()
+        super().__init__(max_retries=max_retries)
         self.api_key = api_key
         self.model = model
         self.api_base = api_base.rstrip("/")
@@ -42,21 +45,8 @@ class CohereRerankClient(RerankBase):
             timeout=30.0,
         )
 
-    def rerank_batch(self, query: str, documents: List[str]) -> Optional[List[float]]:
-        """
-        Rerank documents against a query using Cohere Rerank API.
-
-        Args:
-            query: Query text
-            documents: List of document texts to rank
-
-        Returns:
-            List of relevance scores (0-1) in same order as input documents,
-            or None on failure (caller should fall back to vector scores).
-        """
-        if not documents:
-            return []
-
+    def _rerank_once(self, query: str, documents: List[str]) -> List[Optional[float]]:
+        """One rerank call. Retrying is the base class's job."""
         try:
             started = time.monotonic()
             resp = self._client.post(
@@ -80,22 +70,51 @@ class CohereRerankClient(RerankBase):
                 duration_seconds=time.monotonic() - started,
             )
 
-            # Cohere returns results sorted by score desc with index field
-            # We need to map back to original order
-            scores = [0.0] * len(documents)
-            for result in data.get("results", []):
-                idx = result["index"]
+            # Cohere returns results sorted by score desc with an index field,
+            # so map back to original order. A document Cohere left out stays
+            # None: the caller keeps its vector score rather than being handed
+            # a fabricated 0.0 that any threshold would prune.
+            results = data.get("results", [])
+            if len(results) != len(documents):
+                logger.warning(
+                    "[CohereRerank] Sparse rerank results: expected=%s actual=%s",
+                    len(documents),
+                    len(results),
+                )
+
+            scores: List[Optional[float]] = [None] * len(documents)
+            for result in results:
+                idx = result.get("index") if isinstance(result, dict) else None
+                # bool is an int subclass, and `scores[True]` would silently
+                # score document 1; a negative index would silently score a
+                # document counted from the end.
+                if not isinstance(idx, int) or isinstance(idx, bool):
+                    raise RerankError(
+                        f"Non-integer index in result: {result}",
+                        provider=self.provider,
+                        error_class=ERROR_CLASS_PERMANENT,
+                    )
+                if not (0 <= idx < len(documents)):
+                    raise RerankError(
+                        f"Out-of-bounds index in result: {result}",
+                        provider=self.provider,
+                        error_class=ERROR_CLASS_PERMANENT,
+                    )
+                if "relevance_score" not in result:
+                    raise RerankError(
+                        f"Missing relevance_score in result: {result}",
+                        provider=self.provider,
+                        error_class=ERROR_CLASS_PERMANENT,
+                    )
                 scores[idx] = result["relevance_score"]
 
             logger.debug(f"[CohereRerank] Reranked {len(documents)} documents")
             return scores
 
-        except httpx.HTTPStatusError as e:
-            logger.error(f"[CohereRerank] API error: {e.response.status_code} {e.response.text}")
-            return None
+        except RerankError:
+            raise
         except Exception as e:
-            logger.error(f"[CohereRerank] Rerank failed: {e}")
-            return None
+            raise rerank_error_from_exception(e, provider=self.provider) from e
 
     def close(self):
         self._client.close()
@@ -116,4 +135,5 @@ class CohereRerankClient(RerankBase):
         return cls(
             api_key=config.api_key,
             model=config.model_name if config.model_name != "doubao-seed-rerank" else "rerank-v3.5",
+            max_retries=config.max_retries,
         )

@@ -4,7 +4,10 @@
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from openviking.models.rerank import CohereRerankClient
+from openviking.models.rerank.errors import RerankError
 
 
 class TestCohereRerankClient:
@@ -42,7 +45,7 @@ class TestCohereRerankClient:
         assert client.rerank_batch("query", []) == []
 
     @patch("openviking.models.rerank.cohere_rerank.httpx.Client")
-    def test_rerank_batch_api_error_returns_none(self, mock_client_class):
+    def test_rerank_batch_api_error_is_reported(self, mock_client_class):
         import httpx
 
         mock_client = MagicMock()
@@ -57,8 +60,8 @@ class TestCohereRerankClient:
         mock_client.post.return_value = mock_response
 
         client = CohereRerankClient(api_key="bad-key")
-        result = client.rerank_batch("query", ["doc"])
-        assert result is None
+        with pytest.raises(RerankError):
+            client.rerank_batch("query", ["doc"])
 
     @patch("openviking.models.rerank.cohere_rerank.httpx.Client")
     def test_rerank_preserves_original_order(self, mock_client_class):
