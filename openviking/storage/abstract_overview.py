@@ -418,9 +418,10 @@ def body_for_preview_lenient(raw: str | bytes) -> str:
     try:
         return body_for_preview(raw)
     except AbstractOverviewFormatError:
-        if isinstance(raw, bytes):
-            return raw.decode("utf-8", errors="replace")
-        return raw
+        text = raw.decode("utf-8", errors="replace") if isinstance(raw, bytes) else str(raw)
+        if text.strip() in {"---", "--- ---", ""}:
+            return ""
+        return text
 
 
 def parse_overview_file_summaries(overview_content: str | bytes) -> Dict[str, str]:

@@ -3,6 +3,15 @@
 
 from __future__ import annotations
 
+try:
+    import rapidfuzz
+except ImportError:
+    import sys
+    from unittest.mock import MagicMock
+
+    sys.modules.setdefault("rapidfuzz", MagicMock())
+    sys.modules.setdefault("rapidfuzz.distance", MagicMock())
+
 import httpx
 import pytest
 from fastapi import FastAPI

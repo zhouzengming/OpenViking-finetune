@@ -434,11 +434,7 @@ class HierarchicalRetriever:
                 # the public find/search preview contract body-only at its final
                 # conversion boundary. L2 user Markdown is intentionally left
                 # untouched, including ordinary YAML frontmatter.
-                try:
-                    abstract = body_for_preview(abstract)
-                except AbstractOverviewFormatError as exc:
-                    logger.warning("Malformed sidecar in retrieval result %s: %s", display_uri, exc)
-                    abstract = ""
+                abstract = body_for_preview_lenient(abstract)
 
             results.append(
                 MatchedContext(
