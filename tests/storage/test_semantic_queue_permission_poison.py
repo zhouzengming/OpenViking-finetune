@@ -9,6 +9,8 @@ rather than retried forever.
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from openviking.storage.queuefs.named_queue import NamedQueue
+from openviking.storage.queuefs.process_result import ProcessResult
 from openviking.storage.queuefs.semantic_msg import SemanticMsg
 from openviking.storage.queuefs.semantic_processor import SemanticProcessor
 from openviking_cli.exceptions import PermissionDeniedError
@@ -67,28 +69,32 @@ class TestPermissionDeniedIsDropped:
     def _processor_and_msg(self):
         processor = SemanticProcessor()
         processor._requeue_semantic_msg_after_error = AsyncMock()
-        processor._circuit_breaker = MagicMock()
-        processor.report_error = MagicMock()
         msg = SemanticMsg(uri="viking://user/zzm/memories/a.md", context_type="resource")
-        return processor, msg
+        breaker = processor._account_breaker(msg.account_id)
+        breaker.record_failure = MagicMock()
+        return processor, msg, breaker
 
-    async def test_not_re_enqueued(self):
-        processor, msg = self._processor_and_msg()
+    async def test_not_re_enqueued_and_returns_failed_process_result(self):
+        processor, msg, _ = self._processor_and_msg()
         boom = PermissionDeniedError("write .overview.md denied")
 
-        with patch(f"{MODULE}.is_semantic_msg_stale", side_effect=boom):
-            assert await processor.on_dequeue(msg.to_dict()) is None
+        with (
+            patch(f"{MODULE}.is_semantic_msg_stale", side_effect=boom),
+            patch.object(processor, "_cleanup_local_artifact", new=AsyncMock()) as cleanup,
+        ):
+            result = await processor.on_dequeue(msg.to_dict())
 
+        assert NamedQueue._validate_result(result) == ProcessResult.failed(str(boom))
         processor._requeue_semantic_msg_after_error.assert_not_awaited()
-        processor.report_error.assert_called_once()
+        cleanup.assert_awaited_once()
 
-    async def test_does_not_trip_the_shared_circuit_breaker(self):
-        # The breaker is shared by every account; tripping it here stalls
-        # semantic indexing for all of them.
-        processor, msg = self._processor_and_msg()
+    async def test_does_not_trip_the_account_circuit_breaker(self):
+        # Tripping the circuit breaker on a storage permission error would stall
+        # subsequent valid semantic indexing messages.
+        processor, msg, breaker = self._processor_and_msg()
         boom = PermissionDeniedError("write .overview.md denied")
 
         with patch(f"{MODULE}.is_semantic_msg_stale", side_effect=boom):
             await processor.on_dequeue(msg.to_dict())
 
-        processor._circuit_breaker.record_failure.assert_not_called()
+        breaker.record_failure.assert_not_called()

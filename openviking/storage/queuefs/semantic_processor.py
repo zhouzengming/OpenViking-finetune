@@ -795,7 +795,8 @@ class SemanticProcessor(DequeueHandlerBase):
                 # classify_api_error only understands model API failures, so a
                 # storage-layer permission error falls through to "transient"
                 # and is retried forever. Retrying never grants the permission,
-                # and the circuit breaker is shared by every account.
+                # and tripping the circuit breaker would stall valid work.
+                execute_status = "error"
                 logger.error(
                     "Permission denied processing semantic message, dropping: %s",
                     e,
@@ -806,8 +807,8 @@ class SemanticProcessor(DequeueHandlerBase):
                     get_request_wait_tracker().mark_semantic_failed(
                         msg.telemetry_id, msg.id, str(e)
                     )
-                self.report_error(str(e), data)
-                return None
+                    await self._cleanup_local_artifact(msg)
+                return ProcessResult.failed(str(e))
 
             error_class = classify_api_error(e)
             if error_class == ERROR_CLASS_INPUT_TOO_LARGE:
