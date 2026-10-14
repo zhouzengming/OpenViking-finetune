@@ -232,10 +232,22 @@ print(*sorted({l.split()[-1] for l in open(f'/proc/{pid}/maps')
 
 ## 日常更新（纯 Python 改动）
 
+首次完成完整构建（本地已有 `openviking:source` 镜像）后，若后续只改了 `openviking/` 或 `openviking_cli/` 下的 `.py` 文件且未变动依赖（`pyproject.toml` / `uv.lock` / `Cargo.lock` 未变），可直接用叠加脚本秒级更新 `openviking:source` 镜像并重建容器：
+
 ```bash
-docker/bie-overlay/build.sh          # 在官方 v0.4.16 镜像上只覆盖改动的 .py
-cd ~/.containers/openviking && docker compose up -d
+# 1) 将相对 v0.5.0 改动的 .py 叠加到 openviking:source（秒级完成，内置字节码与新符号自检）
+BASE_TAG=v0.5.0 BASE_IMAGE=openviking:source \
+  ./docker/bie-overlay/build.sh openviking:source
+
+# 2) 检测到 openviking:source 镜像 ID 变化后自动重建容器
+#    （若使用非默认状态目录，如 .25 服务器或测试机独立目录，需加上 OPENVIKING_STATE_DIR=...）
+OPENVIKING_VERSION=$(git describe --tags --match 'v[0-9]*' | sed 's/^v//; s/-\([0-9]*\)-g/+\1.g/') \
+  docker compose -f docker-compose.build.yml up -d
 ```
+
+- `BASE_TAG`：对比源码改动的基线 Git tag/commit（`v0.5.0` 分支传 `v0.5.0`；不传时脚本默认回退到旧版 `499995f3` 即 `v0.4.16`）。
+- `BASE_IMAGE`：被叠加的本地基础镜像（完整构建产出为 `openviking:source`）。
+- 位置参数 `openviking:source`：构建输出的镜像 tag，与 `docker-compose.build.yml` 默认引用的镜像名一致。
 
 细节与前提见 [`docker/bie-overlay/README.md`](docker/bie-overlay/README.md)。
 
