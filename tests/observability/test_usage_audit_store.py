@@ -850,6 +850,90 @@ async def test_context_heatmap_rebuckets_hour_for_shanghai(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_retrieval_heatmap_rebuckets_and_filters_status(tmp_path):
+    """Retrieval heatmap aggregates successful find/search counts by 4h or hour
+    buckets in the viewer's timezone, while ignoring failed retrievals and
+    honoring user_id scoping."""
+    store = SQLiteUsageAuditStore(tmp_path / "usage.sqlite3")
+    await store.initialize()
+    try:
+        await store.record_batch(
+            [
+                _event(
+                    "http.request",
+                    {
+                        "request_id": "req-find-ok",
+                        "method": "POST",
+                        "route": "/api/v1/search/find",
+                        "status": "200",
+                        "duration_seconds": 0.02,
+                    },
+                    ts=datetime(2026, 5, 12, 23, 30, tzinfo=timezone.utc),
+                ),
+                _event(
+                    "http.request",
+                    {
+                        "request_id": "req-search-ok",
+                        "method": "POST",
+                        "route": "/api/v1/search/search",
+                        "status": "200",
+                        "duration_seconds": 0.03,
+                    },
+                    ts=datetime(2026, 5, 12, 23, 45, tzinfo=timezone.utc),
+                    user_id="user-2",
+                ),
+                _event(
+                    "http.request",
+                    {
+                        "request_id": "req-find-err",
+                        "method": "POST",
+                        "route": "/api/v1/search/find",
+                        "status": "500",
+                        "duration_seconds": 0.01,
+                    },
+                    ts=datetime(2026, 5, 12, 23, 50, tzinfo=timezone.utc),
+                ),
+            ]
+        )
+        shanghai = ZoneInfo("Asia/Shanghai")
+        # 23:30 UTC on 2026-05-12 -> 07:30 on 2026-05-13 in Asia/Shanghai (4h bucket = 4)
+        rows_4h = await store.get_retrieval_heatmap(
+            account_id="acct-1",
+            start_user_date="2026-05-13",
+            end_user_date="2026-05-13",
+            bucket="4h",
+            tz=shanghai,
+        )
+        bucket_4 = next(
+            (row for row in rows_4h if row["date"] == "2026-05-13" and row["hour"] == 4),
+            None,
+        )
+        assert bucket_4 is not None
+        assert bucket_4["find"] == 1
+        assert bucket_4["search"] == 1
+        assert bucket_4["total"] == 2
+
+        rows_hour_user1 = await store.get_retrieval_heatmap(
+            account_id="acct-1",
+            user_id="user-1",
+            start_user_date="2026-05-13",
+            end_user_date="2026-05-13",
+            bucket="hour",
+            tz=shanghai,
+        )
+        hour_7 = next(
+            (row for row in rows_hour_user1 if row["date"] == "2026-05-13" and row["hour"] == 7),
+            None,
+        )
+        assert hour_7 is not None
+        assert hour_7["find"] == 1
+        assert hour_7["search"] == 0
+        assert hour_7["total"] == 1
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
 async def test_query_audit_logs_excludes_api_types(tmp_path):
     """`exclude_api_types` drops matching rows from both the page and the summary.
 

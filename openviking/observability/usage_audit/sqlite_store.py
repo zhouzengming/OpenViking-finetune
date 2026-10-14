@@ -588,6 +588,92 @@ class SQLiteUsageAuditStore:
         in_range = set(_date_range(start_user_date, end_user_date))
         return [rows[key] for key in sorted(rows) if key[0] in in_range]
 
+    async def get_retrieval_heatmap(
+        self,
+        *,
+        account_id: str,
+        start_user_date: str,
+        end_user_date: str,
+        bucket: str,
+        tz: tzinfo,
+        user_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        async with self._lock:
+            return await asyncio.to_thread(
+                self._get_retrieval_heatmap_sync,
+                account_id,
+                start_user_date,
+                end_user_date,
+                bucket,
+                tz,
+                user_id,
+            )
+
+    def _get_retrieval_heatmap_sync(
+        self,
+        account_id: str,
+        start_user_date: str,
+        end_user_date: str,
+        bucket: str,
+        tz: tzinfo,
+        user_id: str | None,
+    ) -> list[dict[str, Any]]:
+        assert self._conn is not None
+        bucket_size = 4 if bucket == "4h" else 1
+        start_day = date.fromisoformat(start_user_date)
+        end_day = date.fromisoformat(end_user_date)
+        utc_start, _ = _user_day_window_utc(start_day, tz)
+        _, utc_end = _user_day_window_utc(end_day, tz)
+        rows: dict[tuple[str, int], dict[str, Any]] = {}
+        for event_date in _date_range(start_user_date, end_user_date):
+            for hour in range(0, 24, bucket_size):
+                rows[(event_date, hour)] = self._empty_retrieval_row(event_date, hour)
+        user_filter, user_params = self._user_scope_sql(user_id)
+        cur = self._conn.execute(
+            """
+            SELECT date_utc, hour_utc, operation, SUM(request_count) AS total
+            FROM usage_retrieval_hourly
+            WHERE account_id = ?
+              {user_filter}
+              AND status = 'success'
+              AND (
+                date_utc > ? OR (date_utc = ? AND hour_utc >= ?)
+              )
+              AND (
+                date_utc < ? OR (date_utc = ? AND hour_utc < ?)
+              )
+            GROUP BY date_utc, hour_utc, operation
+            """.format(user_filter=user_filter),
+            (
+                account_id,
+                *user_params,
+                utc_start.date().isoformat(),
+                utc_start.date().isoformat(),
+                utc_start.hour,
+                utc_end.date().isoformat(),
+                utc_end.date().isoformat(),
+                utc_end.hour,
+            ),
+        )
+        for row in cur.fetchall():
+            local_dt = datetime(
+                *_parse_ymd(row["date_utc"]),
+                int(row["hour_utc"]),
+                tzinfo=UTC,
+            ).astimezone(tz)
+            local_date = local_dt.date().isoformat()
+            local_hour = local_dt.hour
+            normalized_hour = (local_hour // bucket_size) * bucket_size
+            key = (local_date, normalized_hour)
+            item = rows.setdefault(key, self._empty_retrieval_row(local_date, normalized_hour))
+            operation_key = str(row["operation"]).replace(".", "_")
+            value = int(row["total"] or 0)
+            if operation_key in ("find", "search"):
+                item[operation_key] += value
+                item["total"] += value
+        in_range = set(_date_range(start_user_date, end_user_date))
+        return [rows[key] for key in sorted(rows) if key[0] in in_range]
+
     def _fetch_hourly_token_rows(
         self,
         account_id: str,
@@ -686,6 +772,16 @@ class SQLiteUsageAuditStore:
             "add_skill": 0,
             "session_add_message": 0,
             "session_commit": 0,
+        }
+
+    @staticmethod
+    def _empty_retrieval_row(event_date: str, hour: int) -> dict[str, Any]:
+        return {
+            "date": event_date,
+            "hour": hour,
+            "total": 0,
+            "find": 0,
+            "search": 0,
         }
 
     async def query_audit_logs(

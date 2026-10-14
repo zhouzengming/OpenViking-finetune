@@ -16,9 +16,14 @@ class FakeStore:
     def __init__(self) -> None:
         self.audit_call: dict[str, Any] | None = None
         self.token_series_call: dict[str, Any] | None = None
+        self.retrieval_heatmap_call: dict[str, Any] | None = None
 
     async def get_token_series(self, **kwargs):
         self.token_series_call = kwargs
+        return []
+
+    async def get_retrieval_heatmap(self, **kwargs):
+        self.retrieval_heatmap_call = kwargs
         return []
 
     async def query_audit_logs(self, **kwargs):
@@ -46,6 +51,12 @@ async def test_admin_metrics_and_audit_logs_are_account_wide():
         end_date="2026-05-01",
         bucket="day",
     )
+    await service.retrievals(
+        ctx=ctx,
+        start_date="2026-05-01",
+        end_date="2026-05-01",
+        bucket="4h",
+    )
     await service.audit_logs(
         ctx=ctx,
         request_id=None,
@@ -56,8 +67,10 @@ async def test_admin_metrics_and_audit_logs_are_account_wide():
     )
 
     assert store.token_series_call is not None
+    assert store.retrieval_heatmap_call is not None
     assert store.audit_call is not None
     assert store.token_series_call["user_id"] is None
+    assert store.retrieval_heatmap_call["user_id"] is None
     assert store.audit_call["user_id"] is None
 
 
@@ -76,6 +89,12 @@ async def test_regular_user_metrics_and_audit_logs_use_current_identity():
         end_date="2026-05-01",
         bucket="day",
     )
+    await service.retrievals(
+        ctx=ctx,
+        start_date="2026-05-01",
+        end_date="2026-05-01",
+        bucket="hour",
+    )
     await service.audit_logs(
         ctx=ctx,
         request_id=None,
@@ -86,6 +105,8 @@ async def test_regular_user_metrics_and_audit_logs_use_current_identity():
     )
 
     assert store.token_series_call is not None
+    assert store.retrieval_heatmap_call is not None
     assert store.audit_call is not None
     assert store.token_series_call["user_id"] == "alice"
+    assert store.retrieval_heatmap_call["user_id"] == "alice"
     assert store.audit_call["user_id"] == "alice"

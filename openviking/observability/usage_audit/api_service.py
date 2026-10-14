@@ -118,6 +118,28 @@ class UsageAuditQueryService:
         )
         return {"start_date": start_date, "end_date": end_date, "bucket": bucket, "items": items}
 
+    async def retrievals(
+        self,
+        *,
+        ctx: RequestContext,
+        start_date: str,
+        end_date: str,
+        bucket: str,
+        timezone_name: str | None = None,
+    ) -> dict[str, Any]:
+        """Return retrieval heatmap rows in the viewer's tz."""
+        tz = self._resolve_tz(timezone_name)
+        self._validate_date_range(start_date, end_date)
+        items = await self._store.get_retrieval_heatmap(
+            account_id=ctx.account_id,
+            start_user_date=start_date,
+            end_user_date=end_date,
+            bucket=bucket,
+            tz=tz,
+            user_id=self._usage_user_id(ctx),
+        )
+        return {"start_date": start_date, "end_date": end_date, "bucket": bucket, "items": items}
+
     async def audit_logs(
         self,
         *,

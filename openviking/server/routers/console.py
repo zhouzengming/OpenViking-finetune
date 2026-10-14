@@ -112,6 +112,32 @@ async def context_commits(
     return _ok_response(result)
 
 
+@router.get("/retrievals")
+async def retrievals(
+    request: Request,
+    start_date: str = Query(..., description="Start date (viewer-local) in YYYY-MM-DD"),
+    end_date: str = Query(..., description="End date (viewer-local) in YYYY-MM-DD"),
+    bucket: str = Query("hour", pattern="^(hour|4h)$"),
+    timezone: Optional[str] = Query(
+        None,
+        description="IANA viewer timezone (e.g. Asia/Shanghai). Defaults to server tz.",
+    ),
+    _ctx: RequestContext = require_role(Role.ROOT, Role.ADMIN, Role.USER),
+):
+    """Return retrieval heatmap rows for a date range."""
+    service = _runtime_service(request)
+    if service is None:
+        return _disabled_response()
+    result = await service.retrievals(
+        ctx=_ctx,
+        start_date=start_date,
+        end_date=end_date,
+        bucket=bucket,
+        timezone_name=timezone,
+    )
+    return _ok_response(result)
+
+
 @router.get("/audit")
 async def audit_logs(
     request: Request,

@@ -73,6 +73,18 @@ class UsageAuditStore(Protocol):
     ) -> list[dict[str, Any]]:
         """Return context write bucket rows for a viewer-local date range and user scope."""
 
+    async def get_retrieval_heatmap(
+        self,
+        *,
+        account_id: str,
+        start_user_date: str,
+        end_user_date: str,
+        bucket: str,
+        tz: tzinfo,
+        user_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Return retrieval bucket rows for a viewer-local date range and user scope."""
+
     async def query_audit_logs(
         self,
         *,

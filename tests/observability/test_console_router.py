@@ -65,6 +65,7 @@ class FakeConsoleService:
         self.token_series_call = None
         self.dashboard_call = None
         self.context_commits_call = None
+        self.retrievals_call = None
 
     async def token_series(self, **kwargs):
         self.token_series_call = kwargs
@@ -79,6 +80,15 @@ class FakeConsoleService:
 
     async def context_commits(self, **kwargs):
         self.context_commits_call = kwargs
+        return {
+            "start_date": kwargs["start_date"],
+            "end_date": kwargs["end_date"],
+            "bucket": kwargs["bucket"],
+            "items": [],
+        }
+
+    async def retrievals(self, **kwargs):
+        self.retrievals_call = kwargs
         return {
             "start_date": kwargs["start_date"],
             "end_date": kwargs["end_date"],
@@ -154,13 +164,19 @@ async def test_console_router_allows_regular_user_dashboard_metrics():
             "/api/v1/console/context-commits",
             params={"start_date": "2026-05-01", "end_date": "2026-05-12"},
         )
+        retrievals = await client.get(
+            "/api/v1/console/retrievals",
+            params={"start_date": "2026-05-01", "end_date": "2026-05-12"},
+        )
 
     assert summary.status_code == 200
     assert tokens.status_code == 200
     assert commits.status_code == 200
+    assert retrievals.status_code == 200
     assert service.dashboard_call["ctx"].role == Role.USER
     assert service.token_series_call["ctx"].role == Role.USER
     assert service.context_commits_call["ctx"].role == Role.USER
+    assert service.retrievals_call["ctx"].role == Role.USER
 
 
 @pytest.mark.asyncio
@@ -217,10 +233,20 @@ async def test_console_router_passes_timezone_to_dashboard_and_series():
                 "timezone": "Europe/Berlin",
             },
         )
+        await client.get(
+            "/api/v1/console/retrievals",
+            params={
+                "start_date": "2026-05-01",
+                "end_date": "2026-05-12",
+                "bucket": "4h",
+                "timezone": "Asia/Tokyo",
+            },
+        )
 
     assert service.dashboard_call["timezone_name"] == "Asia/Shanghai"
     assert service.token_series_call["timezone_name"] == "America/New_York"
     assert service.context_commits_call["timezone_name"] == "Europe/Berlin"
+    assert service.retrievals_call["timezone_name"] == "Asia/Tokyo"
 
 
 @pytest.mark.asyncio
