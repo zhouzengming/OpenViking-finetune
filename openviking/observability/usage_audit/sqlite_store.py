@@ -390,7 +390,7 @@ class SQLiteUsageAuditStore:
         rows = self._fetch_hourly_token_rows(
             account_id, utc_start, utc_end, user_id=user_id
         )
-        result = {"vlm_input": 0, "vlm_output": 0, "embedding_input": 0}
+        result = {"vlm_input": 0, "vlm_output": 0, "embedding_input": 0, "rerank_input": 0}
         for source, token_type, _, _, total in rows:
             key = f"{source}_{token_type}"
             if key in result:
@@ -462,7 +462,13 @@ class SQLiteUsageAuditStore:
         utc_start, _ = _user_day_window_utc(start_day, tz)
         _, utc_end = _user_day_window_utc(end_day, tz)
         by_date: dict[str, dict[str, Any]] = {
-            d: {"date": d, "vlm_input": 0, "vlm_output": 0, "embedding_input": 0}
+            d: {
+                "date": d,
+                "vlm_input": 0,
+                "vlm_output": 0,
+                "embedding_input": 0,
+                "rerank_input": 0,
+            }
             for d in _date_range(start_user_date, end_user_date)
         }
         for source, token_type, date_utc, hour_utc, total in self._fetch_hourly_token_rows(
@@ -480,7 +486,13 @@ class SQLiteUsageAuditStore:
             )
             slot = by_date.setdefault(
                 local_date,
-                {"date": local_date, "vlm_input": 0, "vlm_output": 0, "embedding_input": 0},
+                {
+                    "date": local_date,
+                    "vlm_input": 0,
+                    "vlm_output": 0,
+                    "embedding_input": 0,
+                    "rerank_input": 0,
+                },
             )
             key = f"{source}_{token_type}"
             if key in slot:

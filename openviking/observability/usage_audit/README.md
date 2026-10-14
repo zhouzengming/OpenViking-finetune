@@ -107,7 +107,7 @@ store backend，而不是让多个实例各写各的本地 SQLite。
 | --- | --- |
 | `vlm.call` | `prompt_tokens` 计入 `vlm_input`，`completion_tokens` 计入 `vlm_output` |
 | `embedding.call` | `prompt_tokens` 计入 `embedding_input` |
-| `rerank.call` | 已可落库，当前 Console summary/series 暂不展示 |
+| `rerank.call` | `prompt_tokens` 计入 `rerank_input` |
 
 ### 今日检索
 
@@ -241,7 +241,8 @@ GET /api/v1/console/dashboard/summary
       "vlm_input": 1000,
       "vlm_output": 500,
       "embedding_input": 200,
-      "total": 1700
+      "rerank_input": 80,
+      "total": 1780
     },
     "today_retrievals": {
       "find": 10,

@@ -328,3 +328,32 @@ class TestRerankBatch:
         body = client._build_request_body("q", ["d"])
         assert "query" in body
         assert "input" not in body
+
+    def test_extracts_usage_total_tokens_from_response(self):
+        """OpenAI/DashScope compatible rerank responses report billed tokens under top-level usage."""
+        client = OpenAIRerankClient(
+            api_key="test-key",
+            api_base="https://dashscope.aliyuncs.com/compatible-mode/v1/reranks",
+            model_name="qwen3-rerank",
+        )
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status.return_value = None
+        mock_response.json.return_value = {
+            "results": [{"index": 0, "relevance_score": 0.91}],
+            "usage": {"total_tokens": 115},
+        }
+
+        with (
+            patch(
+                "openviking.models.rerank.openai_rerank.requests.post",
+                return_value=mock_response,
+            ),
+            patch.object(client, "update_token_usage") as mock_update_usage,
+        ):
+            scores = client.rerank_batch("q", ["d"])
+
+        assert scores == [0.91]
+        mock_update_usage.assert_called_once()
+        assert mock_update_usage.call_args.kwargs["prompt_tokens"] == 115
+        assert mock_update_usage.call_args.kwargs["completion_tokens"] == 0

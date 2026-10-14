@@ -234,6 +234,15 @@ async def test_sqlite_usage_audit_store_aggregates_dashboard_data(tmp_path):
                     user_id="user-2",
                 ),
                 _event(
+                    "rerank.call",
+                    {
+                        "provider": "openai",
+                        "model_name": "qwen3-rerank",
+                        "prompt_tokens": 40,
+                        "completion_tokens": 0,
+                    },
+                ),
+                _event(
                     "http.request",
                     {
                         "request_id": "req-find",
@@ -314,7 +323,8 @@ async def test_sqlite_usage_audit_store_aggregates_dashboard_data(tmp_path):
             "vlm_input": 3,
             "vlm_output": 2,
             "embedding_input": 105,
-            "total": 110,
+            "rerank_input": 40,
+            "total": 150,
         }
         assert await store.get_today_tokens(
             account_id="acct-1", user_id="user-1", user_date="2026-05-12", tz=UTC
@@ -322,7 +332,8 @@ async def test_sqlite_usage_audit_store_aggregates_dashboard_data(tmp_path):
             "vlm_input": 3,
             "vlm_output": 2,
             "embedding_input": 5,
-            "total": 10,
+            "rerank_input": 40,
+            "total": 50,
         }
         assert await store.get_today_retrievals(
             account_id="acct-1", user_date="2026-05-12", tz=UTC
@@ -412,6 +423,7 @@ async def test_sqlite_usage_audit_store_resets_incompatible_legacy_schema(tmp_pa
             "vlm_input": 8,
             "vlm_output": 2,
             "embedding_input": 0,
+            "rerank_input": 0,
             "total": 10,
         }
         commits = await store.get_context_commit_heatmap(
@@ -766,6 +778,16 @@ async def test_token_series_rebuckets_to_user_tz_days(tmp_path):
                     },
                     ts=datetime(2026, 5, 12, 3, 0, tzinfo=timezone.utc),
                 ),
+                _event(
+                    "rerank.call",
+                    {
+                        "provider": "openai",
+                        "model_name": "qwen3-rerank",
+                        "prompt_tokens": 13,
+                        "completion_tokens": 0,
+                    },
+                    ts=datetime(2026, 5, 12, 3, 0, tzinfo=timezone.utc),
+                ),
             ]
         )
         ny = ZoneInfo("America/New_York")
@@ -779,7 +801,9 @@ async def test_token_series_rebuckets_to_user_tz_days(tmp_path):
         by_date = {row["date"]: row for row in series}
         # 03:00 UTC on 2026-05-12 falls on 2026-05-11 23:00 in New York.
         assert by_date["2026-05-11"]["vlm_input"] == 7
+        assert by_date["2026-05-11"]["rerank_input"] == 13
         assert by_date["2026-05-12"]["vlm_input"] == 0
+        assert by_date["2026-05-12"]["rerank_input"] == 0
     finally:
         await store.close()
 

@@ -241,8 +241,22 @@ class RerankBase:
         if isinstance(meta, dict):
             billed_units = meta.get("billed_units", {})
             if isinstance(billed_units, dict):
-                prompt_tokens = billed_units.get("input_tokens", 0)
-                completion_tokens = billed_units.get("output_tokens", 0)
+                prompt_tokens = int(billed_units.get("input_tokens", 0) or 0)
+                completion_tokens = int(billed_units.get("output_tokens", 0) or 0)
+
+        # Try to extract token usage from top-level usage (OpenAI / DashScope / Jina format)
+        if prompt_tokens == 0 and completion_tokens == 0:
+            usage = response_data.get("usage", {})
+            if isinstance(usage, dict):
+                prompt_tokens = int(
+                    usage.get("prompt_tokens")
+                    or usage.get("input_tokens")
+                    or usage.get("total_tokens")
+                    or 0
+                )
+                completion_tokens = int(
+                    usage.get("completion_tokens") or usage.get("output_tokens") or 0
+                )
 
         # If no token info in response, estimate based on text
         if prompt_tokens == 0 and completion_tokens == 0:
