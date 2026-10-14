@@ -12,6 +12,13 @@ export type {
   ConsoleTokenSeriesItem as TokenSeriesItem,
 } from '@ov-server/api/v1/console'
 
+export type TokenDateRange = {
+  endDate: string
+  startDate: string
+}
+
+export type TokenRangeOverride = TokenDateRange | null
+
 export type TokenTrendPayload = {
   color?: string
   dataKey?: string

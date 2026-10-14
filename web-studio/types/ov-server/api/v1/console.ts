@@ -13,6 +13,7 @@ export type ConsoleContextCounts = {
 
 export type ConsoleTokenCounts = {
   embedding_input?: number
+  rerank_input?: number
   total?: number
   vlm_input?: number
   vlm_output?: number
@@ -53,12 +54,14 @@ export type ConsoleSeriesResult<TItem> = OvMaybeDisabled & {
 export type ConsoleTokenSeriesItem = {
   date?: string
   embedding_input?: number
+  rerank_input?: number
   total?: number
   vlm_input?: number
   vlm_output?: number
 }
 
-export type ConsoleTokenSeriesResult = ConsoleSeriesResult<ConsoleTokenSeriesItem>
+export type ConsoleTokenSeriesResult =
+  ConsoleSeriesResult<ConsoleTokenSeriesItem>
 
 export type ConsoleContextCommitItem = {
   add_resource?: number
@@ -70,7 +73,8 @@ export type ConsoleContextCommitItem = {
   total?: number
 }
 
-export type ConsoleContextCommitsResult = ConsoleSeriesResult<ConsoleContextCommitItem>
+export type ConsoleContextCommitsResult =
+  ConsoleSeriesResult<ConsoleContextCommitItem>
 
 export type ConsoleAuditLogItem = {
   account_id?: string | null
@@ -87,9 +91,10 @@ export type ConsoleAuditLogItem = {
   user_id?: string | null
 }
 
-export type ConsoleAuditResult = OvMaybeDisabled & PaginatedResult<ConsoleAuditLogItem> & {
-  success_rate?: number
-}
+export type ConsoleAuditResult = OvMaybeDisabled &
+  PaginatedResult<ConsoleAuditLogItem> & {
+    success_rate?: number
+  }
 
 export type ConsoleAuditQuery = {
   api_type?: string[] | null

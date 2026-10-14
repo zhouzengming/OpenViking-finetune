@@ -1,3 +1,11 @@
+import {
+  TOKEN_QUICK_RANGE_DAYS,
+  TOKEN_SERIES_DAYS,
+} from '../-constants/dashboard'
+import type { TokenDateRange, TokenRangeOverride } from '../-types/dashboard'
+
+const DATE_KEY_PATTERN = /^\d{4}-\d{2}-\d{2}$/
+
 export function asRecord(v: unknown): Record<string, unknown> {
   return v !== null && typeof v === 'object' && !Array.isArray(v)
     ? (v as Record<string, unknown>)
@@ -38,7 +46,7 @@ export function getViewerTimezone(): string {
   }
 }
 
-function formatDateInTimezone(d: Date, timeZone: string): string {
+export function formatDateInTimezone(d: Date, timeZone: string): string {
   // `en-CA` produces YYYY-MM-DD, which matches the backend `date` query
   // parameter shape exactly.
   return new Intl.DateTimeFormat('en-CA', {
@@ -49,15 +57,19 @@ function formatDateInTimezone(d: Date, timeZone: string): string {
   }).format(d)
 }
 
+export function getTodayDateKey(
+  now: Date = new Date(),
+  timeZone?: string,
+): string {
+  return formatDateInTimezone(now, timeZone ?? getViewerTimezone())
+}
+
 export function getLastDaysRange(
   days: number,
   timeZone?: string,
-): {
-  endDate: string
-  startDate: string
-} {
+  now: Date = new Date(),
+): TokenDateRange {
   const tz = timeZone ?? getViewerTimezone()
-  const now = new Date()
   // Walk back `days - 1` UTC midnights from now and convert each instant in
   // the viewer's tz; using millisecond arithmetic keeps the math safe across
   // DST transitions because we never inspect a local hour.
@@ -67,6 +79,45 @@ export function getLastDaysRange(
     endDate: formatDateInTimezone(now, tz),
     startDate: formatDateInTimezone(earlier, tz),
   }
+}
+
+export function resolveTokenRange(
+  override: TokenRangeOverride,
+  now: Date = new Date(),
+  timeZone?: string,
+): TokenDateRange {
+  return override ?? getLastDaysRange(TOKEN_SERIES_DAYS, timeZone, now)
+}
+
+export function getActiveTokenQuickDays(
+  range: TokenDateRange,
+  now: Date = new Date(),
+  timeZone?: string,
+): (typeof TOKEN_QUICK_RANGE_DAYS)[number] | null {
+  for (const days of TOKEN_QUICK_RANGE_DAYS) {
+    const candidate = getLastDaysRange(days, timeZone, now)
+    if (
+      candidate.startDate === range.startDate &&
+      candidate.endDate === range.endDate
+    ) {
+      return days
+    }
+  }
+  return null
+}
+
+export function normalizeCustomTokenRange(
+  startDate: string,
+  endDate: string,
+): TokenRangeOverride {
+  const start = startDate.trim()
+  const end = endDate.trim()
+  if (!DATE_KEY_PATTERN.test(start) || !DATE_KEY_PATTERN.test(end)) {
+    return null
+  }
+  return start <= end
+    ? { startDate: start, endDate: end }
+    : { startDate: end, endDate: start }
 }
 
 export function formatShortDate(value: string): string {

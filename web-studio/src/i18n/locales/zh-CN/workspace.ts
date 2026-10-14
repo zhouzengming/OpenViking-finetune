@@ -1256,14 +1256,19 @@ const workspace = {
     todayTokens: {
       description: '展示今日实时 Token 用量，每天零点刷新。',
       embeddingInput: 'Embedding 输入 Token',
+      rerankInput: 'Rerank 输入 Token',
       title: '今日 Token 用量',
       vlmInput: 'VLM 输入 Token',
       vlmOutput: 'VLM 输出 Token',
     },
     tokenTrend: {
+      clearRange: '恢复默认区间',
       description:
-        '展示最近 14 天的每日 Token 用量，包括 VLM 输入、VLM 输出和 Embedding 输入。',
-      empty: '最近 14 天暂无 Token 用量',
+        '按日统计所选区间内的 Token 用量，包括 VLM 输入、VLM 输出、Embedding 输入和 Rerank 输入。',
+      empty: '所选区间暂无 Token 用量',
+      endDate: '结束日期',
+      quickDays: '{{count}} 天',
+      startDate: '开始日期',
       title: 'Token 总用量统计',
     },
     usageDisabled: '用量和审计功能尚未初始化，暂无实时统计。',

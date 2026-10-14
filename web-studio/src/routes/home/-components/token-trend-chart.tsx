@@ -92,6 +92,18 @@ export function TokenTrendChart({
                   stopOpacity={0.02}
                 />
               </linearGradient>
+              <linearGradient id="tokenTrendRerank" x1="0" x2="0" y1="0" y2="1">
+                <stop
+                  offset="5%"
+                  stopColor={TOKEN_COLORS.rerank}
+                  stopOpacity={0.12}
+                />
+                <stop
+                  offset="95%"
+                  stopColor={TOKEN_COLORS.rerank}
+                  stopOpacity={0.02}
+                />
+              </linearGradient>
             </defs>
             <CartesianGrid
               stroke="currentColor"
@@ -102,6 +114,7 @@ export function TokenTrendChart({
               axisLine={false}
               className="text-muted-foreground"
               dataKey="date"
+              minTickGap={24}
               tick={{ fill: 'currentColor', fontSize: 12 }}
               tickFormatter={formatShortDate}
               tickLine={false}
@@ -145,6 +158,15 @@ export function TokenTrendChart({
               strokeWidth={2}
               type="monotone"
             />
+            <Area
+              dataKey="rerank_input"
+              fill="url(#tokenTrendRerank)"
+              name="rerank_input"
+              stackId="tokens"
+              stroke={TOKEN_COLORS.rerank}
+              strokeWidth={2}
+              type="monotone"
+            />
           </AreaChart>
         </ResponsiveContainer>
       </div>
@@ -160,6 +182,10 @@ export function TokenTrendChart({
         <LegendDot
           color={TOKEN_COLORS.embedding}
           label={t('todayTokens.embeddingInput')}
+        />
+        <LegendDot
+          color={TOKEN_COLORS.rerank}
+          label={t('todayTokens.rerankInput')}
         />
       </div>
     </>
@@ -194,6 +220,7 @@ function TokenTrendTooltip({
   const labelForKey = (key: string | undefined) => {
     if (key === 'vlm_input') return t('todayTokens.vlmInput')
     if (key === 'vlm_output') return t('todayTokens.vlmOutput')
+    if (key === 'rerank_input') return t('todayTokens.rerankInput')
     return t('todayTokens.embeddingInput')
   }
 

@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
@@ -15,6 +16,7 @@ import {
   fetchConsoleTokenSeries,
 } from './-lib/api'
 import { isDisabledPayload } from './-lib/format'
+import type { TokenRangeOverride } from './-types/dashboard'
 import { useAppConnection } from '#/hooks/use-app-connection'
 import type {
   ConnectionDraft,
@@ -57,6 +59,8 @@ function HomePage() {
   const { t } = useTranslation('home')
   const { connection, connectionRole, isConnectionRoleLoading } =
     useAppConnection()
+  const [tokenRangeOverride, setTokenRangeOverride] =
+    useState<TokenRangeOverride>(null)
   const canQueryMetrics =
     !isConnectionRoleLoading && connectionRole !== 'unknown'
   const metricsScopeKey = getMetricsScopeKey(connection, connectionRole)
@@ -70,8 +74,12 @@ function HomePage() {
 
   const tokenSeries = useQuery({
     enabled: canQueryMetrics,
-    queryFn: fetchConsoleTokenSeries,
-    queryKey: ['console-token-series', 'last-14-days', metricsScopeKey],
+    queryFn: () => fetchConsoleTokenSeries(tokenRangeOverride),
+    queryKey: [
+      'console-token-series',
+      tokenRangeOverride ?? 'last-14-days',
+      metricsScopeKey,
+    ],
     refetchInterval: 60_000,
   })
 
@@ -131,6 +139,8 @@ function HomePage() {
         disabledMessage={unavailableMessage}
         isError={tokenSeries.isError}
         isLoading={isSeriesLoading}
+        onRangeChange={setTokenRangeOverride}
+        rangeOverride={tokenRangeOverride}
         t={t}
       />
 

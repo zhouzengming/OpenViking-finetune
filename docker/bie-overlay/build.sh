@@ -33,27 +33,62 @@ mkdir -p "$CTX/overlay"
 # 构建产物如 _version.py 未被 git 跟踪，因此不会卷入，镜像内原有产物得以保留。
 git diff --name-only "$BASE_TAG" HEAD \
   | grep -E '^(openviking|openviking_cli)/' \
-  | grep -v '^tests/' > "$CTX/changed.txt"
-if [ ! -s "$CTX/changed.txt" ]; then
-  echo "ERROR: 相对 $BASE_TAG 没有需要叠加的包内源码改动。" >&2
+  | grep -v '^tests/' > "$CTX/changed.txt" || true
+
+HAS_STUDIO_CHANGES=0
+if ! git diff --quiet "$BASE_TAG" HEAD -- web-studio/; then
+  HAS_STUDIO_CHANGES=1
+fi
+
+if [ ! -s "$CTX/changed.txt" ] && [ "$HAS_STUDIO_CHANGES" -eq 0 ]; then
+  echo "ERROR: 相对 $BASE_TAG 没有需要叠加的包内或 web-studio 源码改动。" >&2
   exit 1
 fi
 while read -r f; do
+  [ -z "$f" ] && continue
   mkdir -p "$CTX/overlay/$(dirname "$f")"
   cp "$f" "$CTX/overlay/$f"
 done < "$CTX/changed.txt"
 
-echo "将叠加 $(wc -l < "$CTX/changed.txt") 个文件到 $BASE_IMAGE:"
+STUDIO_STAGE_DOCKERFILE=""
+STUDIO_COPY_DOCKERFILE=""
+if [ "$HAS_STUDIO_CHANGES" -eq 1 ]; then
+  if [ -f "web-studio/dist/index.html" ]; then
+    echo "检测到 web-studio 改动，使用已有构建产物 web-studio/dist 叠加..."
+    mkdir -p "$CTX/overlay/openviking/web_studio/dist"
+    cp -r web-studio/dist/. "$CTX/overlay/openviking/web_studio/dist/"
+    STUDIO_COPY_DOCKERFILE="RUN rm -rf $SITE_PACKAGES/openviking/web_studio/dist && mkdir -p $SITE_PACKAGES/openviking/web_studio/dist
+COPY overlay/openviking/web_studio/dist/ $SITE_PACKAGES/openviking/web_studio/dist/"
+  else
+    echo "检测到 web-studio 改动，将在容器构建阶段编译 web-studio/dist..."
+    mkdir -p "$CTX/web-studio"
+    tar -cf - --exclude='node_modules' --exclude='dist' web-studio | tar -xf - -C "$CTX"
+    NODE_IMAGE="${NODE_IMAGE:-node:24-trixie-slim}"
+    STUDIO_STAGE_DOCKERFILE="FROM $NODE_IMAGE AS web-studio-builder
+ARG TARGETPLATFORM
+WORKDIR /app/web-studio
+COPY web-studio/package.json web-studio/package-lock.json ./
+RUN --mount=type=cache,target=/root/.npm,id=npm-\${TARGETPLATFORM} npm ci
+COPY web-studio/ ./
+RUN npm run build -- --base=/studio/ && test -f dist/index.html
+"
+    STUDIO_COPY_DOCKERFILE="RUN rm -rf $SITE_PACKAGES/openviking/web_studio/dist
+COPY --from=web-studio-builder /app/web-studio/dist/ $SITE_PACKAGES/openviking/web_studio/dist/"
+  fi
+fi
+
+echo "将叠加 $(wc -l < "$CTX/changed.txt") 个 Python 文件$([ "$HAS_STUDIO_CHANGES" -eq 1 ] && printf ' + web-studio/dist' || true)到 $BASE_IMAGE:"
 sed 's/^/  /' "$CTX/changed.txt"
 
 cat > "$CTX/Dockerfile" <<EOF
-FROM $BASE_IMAGE
+${STUDIO_STAGE_DOCKERFILE}FROM $BASE_IMAGE
 ARG SOURCE_COMMIT=unknown
-# COPY 是合并语义，只覆盖同名文件；原生扩展、web_studio、_version.py 等构建产物
+# COPY 是合并语义，只覆盖同名文件；原生扩展、_version.py 等构建产物
 # 不在 overlay 里，原样保留。COPY 保留源文件 mtime，与镜像内 .pyc 记录的
 # mtime/size 不符，Python 会自动重编译，无需手工清理字节码。
 COPY overlay/openviking/     $SITE_PACKAGES/openviking/
 COPY overlay/openviking_cli/ $SITE_PACKAGES/openviking_cli/
+${STUDIO_COPY_DOCKERFILE}
 # 构建期自检：验证被替换的文件加载的确实是新代码，而非残留旧字节码。
 RUN /app/.venv/bin/python -c "\\
 from openviking.server.request_guard import run_guarded;\\

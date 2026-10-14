@@ -216,6 +216,10 @@ export function TodayTokensPanel({
             label={t('todayTokens.embeddingInput')}
             value={formatNumber(data?.embedding_input)}
           />
+          <DetailRow
+            label={t('todayTokens.rerankInput')}
+            value={formatNumber(data?.rerank_input)}
+          />
         </>
       )}
     </MetricPanel>

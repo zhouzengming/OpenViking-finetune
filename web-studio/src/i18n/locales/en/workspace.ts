@@ -1311,14 +1311,19 @@ const workspace = {
       description:
         'Shows real-time token consumption today. Resets at midnight.',
       embeddingInput: 'Embedding input tokens',
+      rerankInput: 'Rerank input tokens',
       title: 'Tokens Today',
       vlmInput: 'VLM input tokens',
       vlmOutput: 'VLM output tokens',
     },
     tokenTrend: {
+      clearRange: 'Reset to default range',
       description:
-        'Shows daily token usage over the last 14 days, including VLM input, VLM output, and embedding input.',
-      empty: 'No token usage in the last 14 days',
+        'Shows daily token usage over the selected date range, including VLM input, VLM output, embedding input, and rerank input.',
+      empty: 'No token usage in the selected date range',
+      endDate: 'End date',
+      quickDays: '{{count}}D',
+      startDate: 'Start date',
       title: 'Total Token Consumption',
     },
     usageDisabled:

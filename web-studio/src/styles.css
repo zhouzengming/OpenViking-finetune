@@ -38,6 +38,7 @@
   --home-token-input: #4679ae;
   --home-token-output: #328574;
   --home-token-embedding: #8264ad;
+  --home-token-rerank: #b87d4b;
   --chart-1: oklch(0.8 0.1 210);
   --chart-2: oklch(0.7 0.12 225);
   --chart-3: oklch(0.6 0.13 243);
@@ -130,6 +131,7 @@
   --home-token-input: #7da7d6;
   --home-token-output: #69b3a2;
   --home-token-embedding: #af98d1;
+  --home-token-rerank: #d8a677;
   --chart-1: oklch(0.65 0.12 210);
   --chart-2: oklch(0.6 0.13 225);
   --chart-3: oklch(0.55 0.14 243);

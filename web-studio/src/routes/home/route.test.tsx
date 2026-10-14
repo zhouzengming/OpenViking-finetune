@@ -3,6 +3,7 @@ import type { ComponentType } from 'react'
 import {
   act,
   cleanup,
+  fireEvent,
   render,
   screen,
   waitFor,
@@ -38,7 +39,10 @@ vi.mock('./-lib/api', () => ({
   fetchConsoleContextCommits: state.commits,
 }))
 vi.mock('react-i18next', () => ({
-  useTranslation: () => ({ t: (key: string) => key }),
+  useTranslation: () => ({
+    t: (key: string, options?: Record<string, unknown>) =>
+      options?.count !== undefined ? `${key}:${options.count}` : key,
+  }),
 }))
 beforeEach(() => {
   state.role = 'user'
@@ -113,6 +117,7 @@ it('renders successful zero measurements after the response completes', async ()
       complete(zero)
     })
     await screen.findByText('contextData.files')
+    expect(screen.getByText('todayTokens.rerankInput')).toBeTruthy()
     for (const title of [
       'contextData.title',
       'todayTokens.title',
@@ -140,6 +145,45 @@ it('uses each series result when the summary is disabled', async () => {
       { timeout: 2000 },
     )
     expect(screen.getByText('contextCommits.empty')).toBeTruthy()
+  } finally {
+    close()
+  }
+})
+
+it('refetches token series when quick or custom date range is selected and cleared', async () => {
+  const close = await renderHome()
+  try {
+    await waitFor(() => expect(state.tokens).toHaveBeenCalledWith(null))
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'tokenTrend.quickDays:7' }),
+    )
+    await waitFor(() =>
+      expect(state.tokens).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          endDate: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
+          startDate: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
+        }),
+      ),
+    )
+
+    fireEvent.change(screen.getByLabelText('tokenTrend.startDate'), {
+      target: { value: '2026-09-01' },
+    })
+    fireEvent.change(screen.getByLabelText('tokenTrend.endDate'), {
+      target: { value: '2026-09-10' },
+    })
+    await waitFor(() =>
+      expect(state.tokens).toHaveBeenLastCalledWith({
+        endDate: '2026-09-10',
+        startDate: '2026-09-01',
+      }),
+    )
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'tokenTrend.clearRange' }),
+    )
+    await waitFor(() => expect(state.tokens).toHaveBeenLastCalledWith(null))
   } finally {
     close()
   }
