@@ -76,6 +76,17 @@ export type ConsoleContextCommitItem = {
 export type ConsoleContextCommitsResult =
   ConsoleSeriesResult<ConsoleContextCommitItem>
 
+export type ConsoleRetrievalHeatmapItem = {
+  date?: string
+  find?: number
+  hour?: number
+  search?: number
+  total?: number
+}
+
+export type ConsoleRetrievalsResult =
+  ConsoleSeriesResult<ConsoleRetrievalHeatmapItem>
+
 export type ConsoleAuditLogItem = {
   account_id?: string | null
   api_type?: string

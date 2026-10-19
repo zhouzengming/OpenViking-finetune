@@ -1,6 +1,7 @@
 import {
   getConsoleContextCommits,
   getConsoleDashboardSummary,
+  getConsoleRetrievals,
   getConsoleTokens,
   getOvResult,
 } from '#/lib/ov-client'
@@ -10,6 +11,7 @@ import type {
   ConsoleSeriesQuery,
   ConsoleContextCommitsResult,
   ConsoleDashboardSummaryResult,
+  ConsoleRetrievalsResult,
   ConsoleTokenSeriesResult,
 } from '@ov-server/api/v1/console'
 import type { TokenDateRange, TokenRangeOverride } from '../-types/dashboard'
@@ -65,4 +67,16 @@ export function fetchConsoleContextCommits(): Promise<ConsoleContextCommitsResul
   return getOvResult<ConsoleContextCommitsResult>(
     getConsoleContextCommits({ query }),
   )
+}
+
+export function fetchConsoleRetrievals(): Promise<ConsoleRetrievalsResult> {
+  const tz = getViewerTimezone()
+  const range = getLastDaysRange(COMMIT_SERIES_DAYS, tz)
+  const query: ConsoleSeriesQuery = {
+    bucket: '4h',
+    end_date: range.endDate,
+    start_date: range.startDate,
+    timezone: tz,
+  }
+  return getOvResult<ConsoleRetrievalsResult>(getConsoleRetrievals({ query }))
 }

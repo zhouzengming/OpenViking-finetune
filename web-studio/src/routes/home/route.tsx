@@ -13,6 +13,7 @@ import { TokenTrendPanel } from './-components/token-trend-panel'
 import {
   fetchConsoleContextCommits,
   fetchConsoleDashboardSummary,
+  fetchConsoleRetrievals,
   fetchConsoleTokenSeries,
 } from './-lib/api'
 import { isDisabledPayload } from './-lib/format'
@@ -90,6 +91,13 @@ function HomePage() {
     refetchInterval: 60_000,
   })
 
+  const retrievals = useQuery({
+    enabled: canQueryMetrics,
+    queryFn: fetchConsoleRetrievals,
+    queryKey: ['console-retrievals', 'last-365-days', metricsScopeKey],
+    refetchInterval: 60_000,
+  })
+
   const summary = dashboard.data
   const identityUnavailable =
     !isConnectionRoleLoading && connectionRole === 'unknown'
@@ -103,6 +111,8 @@ function HomePage() {
     isConnectionRoleLoading || (canQueryMetrics && tokenSeries.isPending)
   const isCommitsLoading =
     isConnectionRoleLoading || (canQueryMetrics && contextCommits.isPending)
+  const isRetrievalsLoading =
+    isConnectionRoleLoading || (canQueryMetrics && retrievals.isPending)
 
   return (
     <div className="flex flex-col gap-5 pb-8">
@@ -150,6 +160,9 @@ function HomePage() {
         disabledMessage={unavailableMessage}
         isError={contextCommits.isError}
         isLoading={isCommitsLoading}
+        isRetrievalError={retrievals.isError}
+        isRetrievalLoading={isRetrievalsLoading}
+        retrievalData={retrievals.data}
         t={t}
       />
     </div>

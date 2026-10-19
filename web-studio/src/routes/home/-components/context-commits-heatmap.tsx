@@ -4,33 +4,39 @@ import { createPortal } from 'react-dom'
 import HeatMap from '@uiw/react-heat-map'
 
 import {
-  HEATMAP_COLOR_STOPS,
   HEATMAP_EMPTY_COLOR,
+  HEATMAP_MODE_COLOR_STOPS,
 } from '../-constants/dashboard'
 import type {
   CommitHeatmapStats,
   CommitTooltip,
   HeatMapDayValue,
+  HeatmapActivityMode,
   HomeT,
 } from '../-types/dashboard'
 import { asNumber, formatNumber, formatShortDate } from '../-lib/format'
 import { getHeatmapFillColor } from '../-lib/normalize'
 
 export function ContextCommitsHeatmap({
+  colorStops,
   endDate,
   items,
+  mode = 'combined',
   panelColors,
   startDate,
   stats,
   t,
 }: {
+  colorStops?: readonly string[]
   endDate: Date
   items: HeatMapDayValue[]
+  mode?: HeatmapActivityMode
   panelColors: Record<number, string>
   startDate: Date
   stats: CommitHeatmapStats
   t: HomeT
 }) {
+  const activeColorStops = colorStops ?? HEATMAP_MODE_COLOR_STOPS[mode]
   const { i18n } = useTranslation('home')
   const locale = i18n.resolvedLanguage ?? i18n.language
   const monthLabels = Array.from({ length: 12 }, (_, month) =>
@@ -87,7 +93,34 @@ export function ContextCommitsHeatmap({
                   ? (value as HeatMapDayValue)
                   : null
                 const count = asNumber(value.count)
-                const fill = getHeatmapFillColor(count, panelColors)
+                const fill = getHeatmapFillColor(
+                  count,
+                  panelColors,
+                  activeColorStops,
+                )
+                const cellTitle = heatmapItem
+                  ? mode === 'combined'
+                    ? t('contextCommits.tooltip.combinedSummary', {
+                        date: heatmapItem.details.date,
+                        retrievals: formatNumber(
+                          heatmapItem.retrievalTotal ??
+                            heatmapItem.retrievalDetails?.total ??
+                            0,
+                        ),
+                        writes: formatNumber(
+                          heatmapItem.writeTotal ?? heatmapItem.details.total,
+                        ),
+                      })
+                    : mode === 'retrieval'
+                      ? t('contextCommits.tooltip.retrievalSummary', {
+                          count: formatNumber(heatmapItem.count),
+                          date: heatmapItem.details.date,
+                        })
+                      : t('contextCommits.tooltip.writeSummary', {
+                          count: formatNumber(heatmapItem.count),
+                          date: heatmapItem.details.date,
+                        })
+                  : ''
                 return (
                   <rect
                     {...props}
@@ -110,7 +143,9 @@ export function ContextCommitsHeatmap({
                       fill,
                       transition: 'fill 0.15s, opacity 0.15s',
                     }}
-                  />
+                  >
+                    {cellTitle ? <title>{cellTitle}</title> : null}
+                  </rect>
                 )
               }}
               rectSize={11}
@@ -129,7 +164,7 @@ export function ContextCommitsHeatmap({
                 className="size-3 rounded-[2px]"
                 style={{ backgroundColor: HEATMAP_EMPTY_COLOR }}
               />
-              {HEATMAP_COLOR_STOPS.map((color, index) => (
+              {activeColorStops.map((color, index) => (
                 <span
                   key={`${color}-${index}`}
                   className="size-3 rounded-[2px]"
@@ -151,7 +186,11 @@ export function ContextCommitsHeatmap({
             value={formatNumber(stats.peakCount)}
           />
           <ContextCommitStat
-            label={t('contextCommits.stats.recentDay')}
+            label={
+              mode === 'write'
+                ? t('contextCommits.stats.recentDay')
+                : t('contextCommits.stats.recentActivityDay')
+            }
             value={stats.recentDate ? formatShortDate(stats.recentDate) : '--'}
           />
         </div>
@@ -161,6 +200,7 @@ export function ContextCommitsHeatmap({
         ? createPortal(
             <CommitTooltipView
               item={tooltip.item}
+              mode={mode}
               t={t}
               x={tooltip.x}
               y={tooltip.y}
@@ -187,34 +227,102 @@ function ContextCommitStat({ label, value }: { label: string; value: string }) {
 
 function CommitTooltipView({
   item,
+  mode = 'combined',
   t,
   x,
   y,
 }: {
   item: HeatMapDayValue
+  mode?: HeatmapActivityMode
   t: HomeT
   x: number
   y: number
 }) {
   const details = item.details
-  const rows = [
-    {
-      label: t('contextCommits.operations.addResource'),
-      value: details.add_resource,
-    },
-    {
-      label: t('contextCommits.operations.addSkill'),
-      value: details.add_skill,
-    },
-    {
-      label: t('contextCommits.operations.sessionAddMessage'),
-      value: details.session_add_message,
-    },
-    {
-      label: t('contextCommits.operations.sessionCommit'),
-      value: details.session_commit,
-    },
-  ]
+  const retrievalDetails = item.retrievalDetails
+  const writeTotal = item.writeTotal ?? details.total
+  const retrievalTotal = item.retrievalTotal ?? retrievalDetails?.total ?? 0
+
+  const rows =
+    mode === 'retrieval'
+      ? [
+          {
+            label: t('contextCommits.operations.find'),
+            value: retrievalDetails?.find ?? 0,
+          },
+          {
+            label: t('contextCommits.operations.search'),
+            value: retrievalDetails?.search ?? 0,
+          },
+        ]
+      : mode === 'combined'
+        ? [
+            {
+              label: t('contextCommits.operations.writes'),
+              value: writeTotal,
+            },
+            {
+              label: t('contextCommits.operations.retrievals'),
+              value: retrievalTotal,
+            },
+            {
+              label: t('contextCommits.operations.addResource'),
+              value: details.add_resource,
+            },
+            {
+              label: t('contextCommits.operations.addSkill'),
+              value: details.add_skill,
+            },
+            {
+              label: t('contextCommits.operations.sessionAddMessage'),
+              value: details.session_add_message,
+            },
+            {
+              label: t('contextCommits.operations.sessionCommit'),
+              value: details.session_commit,
+            },
+            {
+              label: t('contextCommits.operations.find'),
+              value: retrievalDetails?.find ?? 0,
+            },
+            {
+              label: t('contextCommits.operations.search'),
+              value: retrievalDetails?.search ?? 0,
+            },
+          ]
+        : [
+            {
+              label: t('contextCommits.operations.addResource'),
+              value: details.add_resource,
+            },
+            {
+              label: t('contextCommits.operations.addSkill'),
+              value: details.add_skill,
+            },
+            {
+              label: t('contextCommits.operations.sessionAddMessage'),
+              value: details.session_add_message,
+            },
+            {
+              label: t('contextCommits.operations.sessionCommit'),
+              value: details.session_commit,
+            },
+          ]
+
+  const primaryLabel =
+    mode === 'combined'
+      ? t('contextCommits.tooltip.combinedSummary', {
+          date: details.date,
+          retrievals: formatNumber(retrievalTotal),
+          writes: formatNumber(writeTotal),
+        })
+      : details.date
+  const totalLabel =
+    mode === 'retrieval'
+      ? t('contextCommits.tooltip.retrievalTotal')
+      : mode === 'combined'
+        ? t('contextCommits.tooltip.combinedTotal')
+        : t('contextCommits.tooltip.total')
 
   // Clamp the tooltip into the viewport so it never overflows on narrow screens.
   const tooltipRef = useRef<HTMLDivElement>(null)
@@ -248,13 +356,13 @@ function CommitTooltipView({
     >
       <div className="flex items-start justify-between gap-4">
         <div>
-          <div className="font-medium tabular-nums">{details.date}</div>
+          <div className="font-medium tabular-nums">{primaryLabel}</div>
           <div className="mt-0.5 text-[11px] text-muted-foreground">
-            {t('contextCommits.tooltip.total')}
+            {totalLabel}
           </div>
         </div>
         <div className="py-1 text-lg font-semibold tabular-nums text-popover-foreground">
-          {details.total}
+          {formatNumber(item.count)}
         </div>
       </div>
 

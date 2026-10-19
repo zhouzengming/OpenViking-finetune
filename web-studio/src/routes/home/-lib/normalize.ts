@@ -4,6 +4,7 @@ import {
 } from '../-constants/dashboard'
 import type {
   ConsoleContextCommitItem,
+  ConsoleRetrievalHeatmapItem,
   ConsoleTokenSeriesItem,
 } from '@ov-server/api/v1/console'
 import type { CommitHeatmapStats, HeatMapDayValue } from '../-types/dashboard'
@@ -39,6 +40,7 @@ function percentile(sortedValues: number[], ratio: number): number {
 
 export function buildHeatmapPanelColors(
   items: HeatMapDayValue[],
+  colorStops: readonly string[] = HEATMAP_COLOR_STOPS,
 ): Record<number, string> {
   const nonZeroCounts = Array.from(
     new Set(
@@ -65,8 +67,7 @@ export function buildHeatmapPanelColors(
   return thresholds.reduce<Record<number, string>>(
     (colors, threshold, index) => ({
       ...colors,
-      [threshold]:
-        HEATMAP_COLOR_STOPS[Math.min(index, HEATMAP_COLOR_STOPS.length - 1)],
+      [threshold]: colorStops[Math.min(index, colorStops.length - 1)],
     }),
     { 0: HEATMAP_EMPTY_COLOR },
   )
@@ -75,6 +76,7 @@ export function buildHeatmapPanelColors(
 export function getHeatmapFillColor(
   count: number,
   panelColors: Record<number, string>,
+  colorStops: readonly string[] = HEATMAP_COLOR_STOPS,
 ): string {
   if (count <= 0) return 'var(--heatmap-empty)'
 
@@ -88,9 +90,10 @@ export function getHeatmapFillColor(
     null,
   )
 
-  return matched === null
-    ? HEATMAP_COLOR_STOPS[0]
-    : (panelColors[matched] ?? HEATMAP_COLOR_STOPS[0])
+  const lightest =
+    (thresholds.length > 0 ? panelColors[thresholds[0]] : undefined) ??
+    colorStops[0]
+  return matched === null ? lightest : (panelColors[matched] ?? lightest)
 }
 
 export function computeCommitHeatmapStats(
@@ -116,21 +119,37 @@ export function computeCommitHeatmapStats(
   )
 }
 
+function emptyCommitDetail(date: string): Required<ConsoleContextCommitItem> {
+  return {
+    add_resource: 0,
+    add_skill: 0,
+    date,
+    hour: 0,
+    session_add_message: 0,
+    session_commit: 0,
+    total: 0,
+  }
+}
+
+function emptyRetrievalDetail(
+  date: string,
+): Required<ConsoleRetrievalHeatmapItem> {
+  return {
+    date,
+    find: 0,
+    hour: 0,
+    search: 0,
+    total: 0,
+  }
+}
+
 export function normalizeCommitHeatmapData(items: unknown): HeatMapDayValue[] {
   const rowsByDate = new Map<string, Required<ConsoleContextCommitItem>>()
 
   for (const item of normalizeCommitItems(items)) {
     if (!item.date) continue
 
-    const existing = rowsByDate.get(item.date) ?? {
-      add_resource: 0,
-      add_skill: 0,
-      date: item.date,
-      hour: 0,
-      session_add_message: 0,
-      session_commit: 0,
-      total: 0,
-    }
+    const existing = rowsByDate.get(item.date) ?? emptyCommitDetail(item.date)
 
     rowsByDate.set(item.date, {
       add_resource: existing.add_resource + item.add_resource,
@@ -150,7 +169,101 @@ export function normalizeCommitHeatmapData(items: unknown): HeatMapDayValue[] {
       count: item.total,
       date: item.date,
       details: item,
+      retrievalTotal: 0,
+      writeTotal: item.total,
     }))
+}
+
+export function normalizeRetrievalHeatmapData(
+  items: unknown,
+): HeatMapDayValue[] {
+  const rowsByDate = new Map<string, Required<ConsoleRetrievalHeatmapItem>>()
+
+  for (const item of normalizeRetrievalItems(items)) {
+    if (!item.date) continue
+
+    const existing =
+      rowsByDate.get(item.date) ?? emptyRetrievalDetail(item.date)
+
+    rowsByDate.set(item.date, {
+      date: item.date,
+      find: existing.find + item.find,
+      hour: 0,
+      search: existing.search + item.search,
+      total: existing.total + item.total,
+    })
+  }
+
+  return Array.from(rowsByDate.values())
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .map((item) => ({
+      count: item.total,
+      date: item.date,
+      details: emptyCommitDetail(item.date),
+      retrievalDetails: item,
+      retrievalTotal: item.total,
+      writeTotal: 0,
+    }))
+}
+
+export function normalizeCombinedHeatmapData(
+  commitItems: unknown,
+  retrievalItems: unknown,
+): HeatMapDayValue[] {
+  const commitByDate = new Map<string, Required<ConsoleContextCommitItem>>()
+  const retrievalByDate = new Map<
+    string,
+    Required<ConsoleRetrievalHeatmapItem>
+  >()
+  const allDates = new Set<string>()
+
+  for (const item of normalizeCommitItems(commitItems)) {
+    if (!item.date) continue
+    allDates.add(item.date)
+    const existing = commitByDate.get(item.date) ?? emptyCommitDetail(item.date)
+    commitByDate.set(item.date, {
+      add_resource: existing.add_resource + item.add_resource,
+      add_skill: existing.add_skill + item.add_skill,
+      date: item.date,
+      hour: 0,
+      session_add_message:
+        existing.session_add_message + item.session_add_message,
+      session_commit: existing.session_commit + item.session_commit,
+      total: existing.total + item.total,
+    })
+  }
+
+  for (const item of normalizeRetrievalItems(retrievalItems)) {
+    if (!item.date) continue
+    allDates.add(item.date)
+    const existing =
+      retrievalByDate.get(item.date) ?? emptyRetrievalDetail(item.date)
+    retrievalByDate.set(item.date, {
+      date: item.date,
+      find: existing.find + item.find,
+      hour: 0,
+      search: existing.search + item.search,
+      total: existing.total + item.total,
+    })
+  }
+
+  return Array.from(allDates)
+    .sort((a, b) => a.localeCompare(b))
+    .map((date) => {
+      const commitDetail = commitByDate.get(date) ?? emptyCommitDetail(date)
+      const retrievalDetail =
+        retrievalByDate.get(date) ?? emptyRetrievalDetail(date)
+      const writeTotal = commitDetail.total
+      const retrievalTotal = retrievalDetail.total
+      return {
+        count: writeTotal + retrievalTotal,
+        date,
+        details: commitDetail,
+        retrievalDetails: retrievalDetail,
+        retrievalTotal,
+        writeTotal,
+      }
+    })
 }
 
 export function normalizeCommitItems(
@@ -172,6 +285,23 @@ export function normalizeCommitItems(
       total:
         asNumber(record.total) ||
         addResource + addSkill + sessionAddMessage + sessionCommit,
+    }
+  })
+}
+
+export function normalizeRetrievalItems(
+  items: unknown,
+): Array<Required<ConsoleRetrievalHeatmapItem>> {
+  return asArray(items).map((raw) => {
+    const record = asRecord(raw)
+    const find = asNumber(record.find)
+    const search = asNumber(record.search)
+    return {
+      date: asString(record.date),
+      find,
+      hour: asNumber(record.hour),
+      search,
+      total: asNumber(record.total) || find + search,
     }
   })
 }

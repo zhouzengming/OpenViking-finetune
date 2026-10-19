@@ -1253,6 +1253,12 @@ const workspace = {
   },
   home: {
     contextCommits: {
+      combinedDescription:
+        'Groups context write and retrieval activity into 4-hour buckets. Hover a cell for details.',
+      combinedEmpty: 'No context activity in the last year',
+      combinedTitle: 'Context Activity Stats',
+      combinedYearlyEmpty: 'No context activity',
+      combinedYearlyTotal: '{{count}} context activities',
       description:
         'Groups resource, skill, session message, and session commit writes into 4-hour buckets. Hover a cell for details.',
       empty: 'No context commits in the last year',
@@ -1269,19 +1275,41 @@ const workspace = {
       operations: {
         addResource: 'Resource writes',
         addSkill: 'Skill writes',
+        find: 'Basic retrieval (find)',
+        retrievals: 'Retrievals',
+        search: 'Enhanced retrieval (search)',
         sessionAddMessage: 'Session messages',
         sessionCommit: 'Session commits',
+        writes: 'Writes',
       },
+      retrievalDescription:
+        'Groups find and search retrieval queries into 4-hour buckets. Hover a cell for details.',
+      retrievalEmpty: 'No context retrievals in the last year',
+      retrievalTitle: 'Context Retrieval Stats',
+      retrievalYearlyEmpty: 'No context retrievals',
+      retrievalYearlyTotal: '{{count}} context retrievals',
       stats: {
         activeDays: 'Active days',
         peakDay: 'Peak day',
+        recentActivityDay: 'Recent activity',
         recentDay: 'Recent commit',
+      },
+      tabs: {
+        ariaLabel: 'Context activity mode switch',
+        combined: 'Combined',
+        retrieval: 'Retrievals',
+        write: 'Writes',
       },
       title: 'Context Commit Stats',
       yearlyEmpty: 'No context commits',
       yearlyTotal: '{{count}} context commits',
       tooltip: {
+        combinedSummary: '{{date}} · {{writes}} writes · {{retrievals}} retrievals',
+        combinedTotal: 'Total activity',
+        retrievalSummary: '{{date}} · {{count}} retrievals',
+        retrievalTotal: 'Total retrievals',
         total: 'Total commits',
+        writeSummary: '{{date}} · {{count}} writes',
       },
     },
     contextData: {

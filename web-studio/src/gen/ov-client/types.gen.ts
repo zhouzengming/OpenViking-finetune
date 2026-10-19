@@ -2289,6 +2289,40 @@ export type GetConsoleContextCommitsResponses = {
     200: unknown;
 };
 
+export type GetConsoleRetrievalsData = {
+    body?: never;
+    headers?: {
+        'x-api-key'?: string | null;
+        authorization?: string | null;
+        'X-OpenViking-Account'?: string | null;
+        'X-OpenViking-User'?: string | null;
+    };
+    path?: never;
+    query: {
+        start_date: string;
+        end_date: string;
+        bucket?: string;
+        timezone?: string | null;
+    };
+    url: '/api/v1/console/retrievals';
+};
+
+export type GetConsoleRetrievalsErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type GetConsoleRetrievalsError = GetConsoleRetrievalsErrors[keyof GetConsoleRetrievalsErrors];
+
+export type GetConsoleRetrievalsResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
 export type GetConsoleAuditData = {
     body?: never;
     headers?: {

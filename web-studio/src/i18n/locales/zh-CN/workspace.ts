@@ -1200,6 +1200,12 @@ const workspace = {
   },
   home: {
     contextCommits: {
+      combinedDescription:
+        '按 4 小时聚合上下文写入与检索活动，鼠标悬停可查看明细。',
+      combinedEmpty: '过去一年暂无上下文读写活动',
+      combinedTitle: '上下文活动统计',
+      combinedYearlyEmpty: '暂无上下文读写活动',
+      combinedYearlyTotal: '{{count}} 次上下文读写活动',
       description:
         '按 4 小时聚合资源、技能、会话消息和提交写入，鼠标悬停可查看明细。',
       empty: '过去一年暂无上下文提交',
@@ -1216,19 +1222,41 @@ const workspace = {
       operations: {
         addResource: '资源写入',
         addSkill: '技能写入',
+        find: '基础检索 (find)',
+        retrievals: '检索',
+        search: '增强检索 (search)',
         sessionAddMessage: '会话消息',
         sessionCommit: '会话提交',
+        writes: '写入',
       },
+      retrievalDescription:
+        '按 4 小时聚合基础检索与增强检索活动，鼠标悬停可查看明细。',
+      retrievalEmpty: '过去一年暂无上下文检索',
+      retrievalTitle: '上下文检索统计',
+      retrievalYearlyEmpty: '暂无上下文检索',
+      retrievalYearlyTotal: '{{count}} 次上下文检索',
       stats: {
         activeDays: '活跃天数',
         peakDay: '峰值单日',
+        recentActivityDay: '最近活跃',
         recentDay: '最近提交',
+      },
+      tabs: {
+        ariaLabel: '上下文活动类型切换',
+        combined: '融合',
+        retrieval: '检索',
+        write: '写入',
       },
       title: '上下文提交统计',
       yearlyEmpty: '暂无上下文提交',
       yearlyTotal: '{{count}} 次上下文提交',
       tooltip: {
+        combinedSummary: '{{date}} · {{writes}} 次写入 · {{retrievals}} 次检索',
+        combinedTotal: '总活动',
+        retrievalSummary: '{{date}} · {{count}} 次检索',
+        retrievalTotal: '总检索',
         total: '总提交',
+        writeSummary: '{{date}} · {{count}} 次写入',
       },
     },
     contextData: {

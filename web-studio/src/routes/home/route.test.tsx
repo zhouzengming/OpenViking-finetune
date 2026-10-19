@@ -19,6 +19,7 @@ const state = vi.hoisted(() => ({
   summary: vi.fn(),
   tokens: vi.fn(),
   commits: vi.fn(),
+  retrievals: vi.fn(),
 }))
 vi.mock('#/hooks/use-app-connection', () => ({
   useAppConnection: () => ({
@@ -37,11 +38,17 @@ vi.mock('./-lib/api', () => ({
   fetchConsoleDashboardSummary: state.summary,
   fetchConsoleTokenSeries: state.tokens,
   fetchConsoleContextCommits: state.commits,
+  fetchConsoleRetrievals: state.retrievals,
 }))
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
-    t: (key: string, options?: Record<string, unknown>) =>
-      options?.count !== undefined ? `${key}:${options.count}` : key,
+    i18n: { language: 'zh-CN', resolvedLanguage: 'zh-CN' },
+    t: (key: string, options?: Record<string, unknown>) => {
+      if (options?.writes !== undefined && options?.retrievals !== undefined) {
+        return `${key}:${options.date}:${options.writes}:${options.retrievals}`
+      }
+      return options?.count !== undefined ? `${key}:${options.count}` : key
+    },
   }),
 }))
 beforeEach(() => {
@@ -53,6 +60,7 @@ beforeEach(() => {
   })
   state.tokens.mockReset().mockResolvedValue({ items: [] })
   state.commits.mockReset().mockResolvedValue({ items: [] })
+  state.retrievals.mockReset().mockResolvedValue({ items: [] })
   vi.stubGlobal('matchMedia', () => ({ matches: true }))
 })
 afterEach(() => {
@@ -144,7 +152,76 @@ it('uses each series result when the summary is disabled', async () => {
       () => expect(screen.getByText('tokenTrend.empty')).toBeTruthy(),
       { timeout: 2000 },
     )
-    expect(screen.getByText('contextCommits.empty')).toBeTruthy()
+    expect(screen.getByText('contextCommits.combinedEmpty')).toBeTruthy()
+  } finally {
+    close()
+  }
+})
+
+it('defaults to leftmost combined heatmap tab and switches between combined, write, and retrieval modes', async () => {
+  state.commits.mockResolvedValue({
+    start_date: '2026-10-01',
+    end_date: '2026-10-14',
+    items: [
+      {
+        date: '2026-10-10',
+        hour: 8,
+        add_resource: 2,
+        add_skill: 1,
+        session_add_message: 0,
+        session_commit: 0,
+        total: 3,
+      },
+    ],
+  })
+  state.retrievals.mockResolvedValue({
+    start_date: '2026-10-01',
+    end_date: '2026-10-14',
+    items: [
+      {
+        date: '2026-10-10',
+        hour: 12,
+        find: 4,
+        search: 1,
+        total: 5,
+      },
+    ],
+  })
+  const close = await renderHome()
+  try {
+    const tablist = await screen.findByRole('tablist', {
+      name: 'contextCommits.tabs.ariaLabel',
+    })
+    const tabs = within(tablist).getAllByRole('tab')
+    expect(tabs.map((tab) => tab.textContent)).toEqual([
+      'contextCommits.tabs.combined',
+      'contextCommits.tabs.write',
+      'contextCommits.tabs.retrieval',
+    ])
+    expect(tabs[0]?.getAttribute('aria-selected')).toBe('true')
+    await waitFor(() =>
+      expect(
+        screen.getByRole('heading', {
+          name: 'contextCommits.combinedYearlyTotal:8',
+        }),
+      ).toBeTruthy(),
+    )
+
+    fireEvent.click(tabs[1]!)
+    expect(tabs[1]?.getAttribute('aria-selected')).toBe('true')
+    expect(
+      screen.getByRole('heading', {
+        name: 'contextCommits.yearlyTotal:3',
+      }),
+    ).toBeTruthy()
+
+    fireEvent.click(tabs[2]!)
+    expect(tabs[2]?.getAttribute('aria-selected')).toBe('true')
+    expect(
+      screen.getByRole('heading', {
+        name: 'contextCommits.retrievalYearlyTotal:5',
+      }),
+    ).toBeTruthy()
   } finally {
     close()
   }
