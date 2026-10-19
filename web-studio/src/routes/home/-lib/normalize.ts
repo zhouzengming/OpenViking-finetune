@@ -102,12 +102,13 @@ export function computeCommitHeatmapStats(
   return items.reduce<CommitHeatmapStats>(
     (stats, item) => {
       if (item.count <= 0) return stats
+      const dateKey = item.details?.date || item.date
 
       return {
         activeDays: stats.activeDays + 1,
         peakCount: item.count > stats.peakCount ? item.count : stats.peakCount,
-        peakDate: item.count > stats.peakCount ? item.date : stats.peakDate,
-        recentDate: item.date > stats.recentDate ? item.date : stats.recentDate,
+        peakDate: item.count > stats.peakCount ? dateKey : stats.peakDate,
+        recentDate: dateKey > stats.recentDate ? dateKey : stats.recentDate,
       }
     },
     {

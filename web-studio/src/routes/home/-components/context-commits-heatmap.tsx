@@ -1,5 +1,5 @@
 import { useTranslation } from 'react-i18next'
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import HeatMap from '@uiw/react-heat-map'
 
@@ -53,6 +53,14 @@ export function ContextCommitsHeatmap({
   )
   const [tooltip, setTooltip] = useState<CommitTooltip | null>(null)
   const heatmapScrollRef = useRef<HTMLDivElement>(null)
+  const heatmapValue = useMemo(
+    () => items.map((item) => ({ ...item })),
+    [items],
+  )
+
+  useEffect(() => {
+    setTooltip(null)
+  }, [mode, items])
 
   useEffect(() => {
     const el = heatmapScrollRef.current
@@ -151,7 +159,7 @@ export function ContextCommitsHeatmap({
               rectSize={11}
               space={3}
               startDate={startDate}
-              value={items}
+              value={heatmapValue}
               weekLabels={weekLabels}
               width={820}
             />
@@ -347,16 +355,18 @@ function CommitTooltipView({
   return (
     <div
       ref={tooltipRef}
-      className="pointer-events-none fixed z-50 w-64 max-w-[calc(100vw-1rem)] rounded-xl border border-border/70 bg-popover/95 px-3.5 py-3 text-xs text-popover-foreground shadow-2xl shadow-black/10 ring-1 ring-foreground/5 backdrop-blur-md dark:shadow-black/35"
+      className="pointer-events-none fixed z-50 w-72 max-w-[calc(100vw-1rem)] rounded-xl border border-border/70 bg-popover/95 px-3.5 py-3 text-xs text-popover-foreground shadow-2xl shadow-black/10 ring-1 ring-foreground/5 backdrop-blur-md dark:shadow-black/35"
       style={{
         left: x,
         top: y - 12,
         transform: `translate(calc(-50% + ${horizontalShift}px), -100%)`,
       }}
     >
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <div className="font-medium tabular-nums">{primaryLabel}</div>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="whitespace-nowrap font-medium tabular-nums">
+            {primaryLabel}
+          </div>
           <div className="mt-0.5 text-[11px] text-muted-foreground">
             {totalLabel}
           </div>
